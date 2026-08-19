@@ -85,7 +85,59 @@ $ageMin = [Math]::Floor(([DateTimeOffset]::Now.ToUnixTimeMilliseconds() - $tu) /
 
 **workdir 共享注意**:两个并行 session 若 `--dir` 相同,文件系统层互相可见。文件级不冲突即可并行。
 
-## 📋 派工 checklist(整合 6 条铁律)
+### 铁律 7:派单命令禁用 `--command` flag(2026-08-20 verify-skill-load 实锤)
+
+**触发条件**:任何 `opencode run` dispatch
+**症状**:session 进了 DB 但 `model` 字段为空(老 skill) + event 表最后一条是 `event`(握手),不是 `command` 注入 → server log 报 `SessionPrompt.command BUN 内部 UnknownError: UnknownError`(chunk-46zs0me7.js:1094:15735,无真因)
+**根因不明**:可能 `--no-replay` + 中文 message + `--auto` 三者组合触发 BUN 边界
+**踩坑实例**:2026-08-20 verify-skill-load 任务,尝试 `opencode run --command "..." --file <brief> --attach ... --no-replay --auto --dir ...` → session 建了 + model 字段空 + command 注入崩
+**正确写法**:消息直接传 positional,不用 `--command`:
+```powershell
+opencode run "请按 brief 执行:打开 .opencode-brief.md 阅读后按 TDD 流程实现 <任务摘要>" `
+  -m <model> `
+  --attach http://localhost:4098 `
+  --title "<任务名>" `
+  --no-replay `
+  --auto `
+  --dir D:\Github\GTS-Play `
+  --file .opencode-brief.md
+```
+**验证三件套**(dispatch 后立即查,缺一不可):
+1. `session.time_created` 与 dispatch 时间戳吻合
+2. `event` 表最后一条事件是正常 `message.*.1`,不是直接崩在 `command` 阶段
+3. `session.model` 字段非空(老 skill 落盘在 session_meta 文件里,真 OK)
+
+**判定**:拿到 sessionId 但 `model` 为空 → 🔴 BUN command 崩,按 `gts-opencode-stop` 走 delete + 三重验证 + 改正确路径重派
+
+### 铁律 8:hermes-home 那一层 skill 默认不进 GTS-Play 项目级 surge prompt(2026-08-20 实锤)
+
+**触发条件**:在 `hermes-home/skills/` 改了业务 skill(如 `gts-memory-search-v3`、`gts-auto`、`gts-bot-rca-discipline`)后,以为重启 4098 就生效
+**症状**:重启 4098 → 跑了 1 个最小任务 → agent 列自己看到的 skill → **没看到 hermes-home 那一层的 skill**
+**根因**:GTS-Play 项目级 `.opencode/opencode.json` 的 `agent.build.permission.skill` 是白名单(allow 列表),**只允许**这 7 个本地 skill:
+- `gts-e2e-test`
+- `gts-e2e-auto`
+- `gts-e2e-perf`
+- `gts-save-flow`
+- `gts-submit-save`
+- `gts-save-memory`
+- `gts-recall`
+
+**hermes-home 那一层**(`E:\Hermes Agent CN Desktop\data\hermes-home\skills/`)的 skill **默认不在** GTS-Play dispatch 的 surge prompt 里 → 改这些 skill + 重启 = 兄弟以为已生效,**实际未生效**
+**验证方法**:dispatch 一个最小任务让 agent 列自己能看到哪些 skill:
+```powershell
+opencode run "请列出你在当前 surge prompt 里能看到的全部 skill 名称(从系统 prompt / tools 部分)," `
+  -m opencode/deepseek-v4-flash-free --attach http://localhost:4098 `
+  --title "verify-skill-load" --no-replay --auto --dir D:\Github\GTS-Play
+```
+**根治路径**(待兄弟拍板,优先级从高到低):
+1. 把高频 hermes-home skill 加到 `D:\Github\GTS-Play\.opencode\opencode.json` 的 `agent.build.permission.skill` 白名单
+2. 改 `~/.config/opencode/opencode.json` 全局配置 `permission.skill."*": "allow"`(注意 allow 与 load 是两个独立维度)
+3. 写一份 skill 副本到 `D:\Github\GTS-Play\.opencode\skills/<name>/SKILL.md`(项目级目录,会被默认加载)
+4. 临时:在 brief 里**手动把 skill 关键段落贴进去**(成本最低,但每次派工都要贴)
+
+**反模式**:改 hermes-home skill → 重启 4098 → 以为生效 → 完成"修复" → 兄弟 3 天后再次质问"为什么没生效" → 浪费时间
+
+## 📋 派工 checklist(整合 8 条铁律)
 
 派工前 30 秒必须过一遍:
 
@@ -98,6 +150,8 @@ $ageMin = [Math]::Floor(([DateTimeOffset]::Now.ToUnixTimeMilliseconds() - $tu) /
 | 5 | Pro non-max 派工后准备 20 分钟主动轮询? | ✅ |
 | 6 | 多任务已拆并行 session? | ✅ |
 | 7 | 状态表格列出所有 session 真实状态(not 上一条通知)? | ✅ |
+| 8 | dispatch 命令**没**用 `--command` flag?消息走 positional? | ✅ |
+| 9 | 改 hermes-home skill 后验证过 surge prompt 实际包含? | ✅ |
 
 ## 🚫 反模式总结(本会话反复踩过的坑)
 
@@ -109,6 +163,8 @@ $ageMin = [Math]::Floor(([DateTimeOffset]::Now.ToUnixTimeMilliseconds() - $tu) /
 | 串行派多任务 | 时间浪费 | 铁律 6 |
 | 派 Pro non-max 后等 wait | 静默 80 分钟没提醒 | 铁律 3 |
 | 卡死 session 试 curl 发消息 | curl 超时不响应 | 铁律 2 处理流程 |
+| 用 `--command` flag 派单 | BUN session.command UnknownError | 铁律 7 |
+| 改 hermes-home skill 重启就以为生效 | skill 没加载,白改 | 铁律 8 |
 
 ## 📊 实战案例(2026-08-19)
 

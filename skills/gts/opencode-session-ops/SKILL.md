@@ -95,7 +95,9 @@ git -C D:\Github\GTS-Play diff --stat HEAD -- <怀疑的文件路径>
 
 ## 6️⃣ part 表结构（DB 直查必备，2026-08-17 实测）
 
-> **🔴 区分 Hermes 会话 vs OpenCode 会话**：本 skill 管的是 **OpenCode agent 会话**（session/part 表在 `opencode.db`）。**Hermes 自己的会话记录**在 `E:\Hermes Agent CN Desktop\data\hermes-home\sessions\request_dump_*.json`，读取方式见 `hermes-session-read` skill。两者不要混——Hermes request dump 是 429 限流时的 HTTP 请求快照，不含完整对话（需分段读取）；OpenCode session/part 表是完整 agent 对话记录。
+> **🔴 区分 Hermes 会话 vs OpenCode 会话**：本 skill 管的是 **OpenCode agent 会话**（session/part/event 表在 `opencode.db`）。**Hermes 自己的会话记录**在 `E:\Hermes Agent CN Desktop\data\hermes-home\sessions\request_dump_*.json`，读取方式见 `hermes-session-read` skill。两者不要混——Hermes request dump 是 429 限流时的 HTTP 请求快照（同一 session_id 可能有多个 dump，取最新的），需分段读取；OpenCode session/part 表是完整 agent 对话记录。
+
+`part` 表**没有 `type`/`seq` 列**
 
 `part` 表**没有 `type`/`seq` 列**（session 表无 `completed` 列同理），结构只有 `id / message_id / session_id / time_created / time_updated / data`。所有内容在 `data` 字段（JSON 字符串，`type` 在 JSON 里：`step-finish`/`text`/`tool`/`patch`/`reasoning`/`step-start`）。查询必须：
 

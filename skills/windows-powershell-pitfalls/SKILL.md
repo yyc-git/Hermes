@@ -193,6 +193,16 @@ Hermes terminal 的 exec shell 在某些路径下会把 `curl.exe -s -o NUL -w "
   ```
 - 验证 health check 类场景(node fetch 最稳)
 
+## 🔴 轮询/守护类脚本（while 循环 + SQL 字符串 + 嵌套插值）直接用 .mjs，别用 .ps1（2026-08-19 实测）
+
+写「while 轮询 sqlite + 结果插值 + 状态拼接」的守护脚本时，**即使用 `powershell -File`（PS 5.1）跑 .ps1 也脆弱**：
+
+- **症状**：.ps1 里 SQL 含 `||`（字符串拼接）+ 双引号内嵌 `$($(if(...){...}else{...}))` 三元插值 → PS 5.1 解析报一堆假语法错：`The token '||' is not a valid statement separator in this version`（`||` 是 PS7 的 pipeline chain 运算符，5.1 不认）、`Missing closing '}' in statement block`，报错行号错乱（指到 while/if 行）
+- **根因**：PS 5.1 对 `||` 与嵌套 `$()` 插值解析脆弱；SQL 字符串里的 `||` 拼接符 + 双引号里嵌套 `$()` 三元表达式 是重灾区
+- **✅ 正确姿势**：这种「循环 + SQL + 插值」脚本直接 `write_file` 写 `.mjs`，`node` 跑 —— `spawnSync('C:\\sqlite\\sqlite3.exe', [db, sql], {encoding:'utf8'})` 拿结果，`const sleep = ms => new Promise(r => setTimeout(r, ms))` 做轮询，字符串拼接用 JS 模板字符串零歧义
+- **判定**：脚本同时含 while 循环 + 含 `||` 的 SQL 字符串 + 内嵌 `$()` 插值 → 默认直接 .mjs，不试 .ps1（省一次解析失败往返）
+- 现成可复用模板：`hermes-session-forensics` skill 的 `scripts/wait-sessions-then-shutdown.mjs`（多会话轮询 ended_at + 关机，2026-08-19 实测通过）
+
 ## 相关技能交叉引用
 
 - `desktop-notify-protocol`(gts):notify.ps1 调用中的 `&` 坑与双机路径

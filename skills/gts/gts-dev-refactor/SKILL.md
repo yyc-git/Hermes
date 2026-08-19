@@ -439,10 +439,12 @@ node scripts/skill-exec-manager.cjs step-done $sid --step-index B --step-name "�
 
 > 依据 `笔记/项目文档/changes/2026-07-28-manual-test-checkpoint/solution.md`
 
-> 🔴 全自动模式跳过 M。但 dispatch 后与兄弟 2 轮及以上自然对话交互，视为退出 auto，M 阶段恢复。
+> 🔴 **全自动模式下 M 阶段不跳过，而是移到最后执行**：C 验收完成后 → 先执行 R（反思）→ S（保存）→ 通知兄弟（自动步骤完成，准备手动测试）→ 再进 M（手动测试）→ M 完成后再执行 R（反思）→ S（保存）→ 通知（最终完成）。标准模式流程不变（C→M→R→S）。
 > 检测：最近 3 条兄弟消息 ≥2 条非简短确认 → 退出 auto，恢复 M。
 
 ### M-0 — 明确宣布进入 M 阶段
+
+> 🔴 **全自动模式下**：C 验收完成后，先执行 R（反思）→ S（保存）→ 通知兄弟（自动步骤完成），然后再进入 M 阶段。
 
 **进入 M 阶段时，必须明确说出「进入 M 阶段（手动测试）」。**
 
@@ -512,6 +514,8 @@ node scripts/skill-exec-manager.cjs step-done $sid --step-index B --step-name "�
 > ```powershell
 > node scripts/skill-exec-manager.cjs step-done $sid --step-index M --step-name "手动测试"
 > ```
+
+> 🔴 **全自动模式下 M-4 完成后**：M 完成 → 执行 R（反思）→ S（保存）→ 通知兄弟（最终完成）。R 和 S 是工作流最后一步。
 
 ---
 

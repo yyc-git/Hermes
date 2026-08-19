@@ -147,6 +147,60 @@ SELECT ... FROM messages WHERE ... ORDER BY created_at DESC;  -- ❌ no such col
 - 写 patch / write_file / skill_manage = 🔴 禁(兄弟维护的源)
 - 详见 `gts-memory-write-discipline` § 4.2
 
+### 7. 🔴 回忆类问题信源优先级(2026-08-20 实锤)
+
+**权威顺序:`git log` > `state.db` / `daily log` > MEMORY 主表**
+
+- MEMORY 主表 = 沉淀,不是 git-tracked,容易和代码现状脱节(本会话踩:8-19 沉淀 antd-mobile Modal 修复清单,8-20 顺手答你时把"已修完"的"待修"又吐出来)
+- 兄弟问"回忆 X / 昨天做了 Y / 那个 commit 是什么" → **必须先 `git log --grep=...`**,git 落地才作数
+- 发现 git ≠ 主表 → 以 git 为准,**立刻 patch 主表**(不要等兄弟纠正)
+
+### 8. 回忆类问题判定矩阵
+
+| 兄弟说法 | 必走步骤 | 禁用 |
+|---|---|---|
+| "回忆昨天 X 修复" / "那个 commit 是啥" | `git log --all --grep=<关键词>` → 看 stat | 直接吐主表 |
+| "上次我们怎么讨论 Y" | `state.db` query + `笔记/memory/openclaw-archive/daily/` | 跳过 daily log 直答 |
+| "你之前学到的 Z 是什么" | 主表 + skill 索引 | 不查 |
+| "现在代码里 X 状态" | `git log` + `git show` + 读当前文件 | 凭记忆判定 |
+
+**核心**:回答"项目级历史状态"(代码/修复/提交)前,**0 步 git 都不能跳**。对话上下文引用("刚才我说的")才走 state.db。
+
+### 9. 🔴 hermes 读资料 vs OpenCode 加载链 — 边界(2026-08-20 实锤)
+
+**绝对边界**:本 skill 服务的是 **hermes 自身**(我)读取 4 源(state.db / skills / 笔记/ / MEMORY_ARCHIVE)的能力。**跟 OpenCode agent 加载 v3 skill 是不是进 surge prompt 完全无关**。
+
+**错误路径(本会话踩)**:
+- 验证"v3 skill 是否被 OpenCode 加载" → 派 OpenCode agent 读 `.opencode/opencode.json` + `/api/skill`
+- 写了个 `hermes-verify-skill-load-20260820.mjs` 跑 7 个断言,其中 5 个失败
+- 全部方向错了 —— 这些断言测的是 **OpenCode 加载链**,不是 hermes 自身能不能 read v3 skill
+
+**正解**:
+- 我(hermes)能不能用 v3 skill → **直接 `read_file` `~/.hermes/skills/gts-memory-search-v3/SKILL.md`** 即可,即时生效
+- OpenCode agent 能不能用 v3 skill → 那是 OpenCode config 问题(`.opencode/opencode.json` 的 `agent.build.permission.skill` allowlist),跟本 skill 无关
+- **不要把"我读 v3 skill"和"OpenCode 加载 v3 skill"混为一谈**;前者 0 配置,后者需要补 allowlist + 重启 4098
+
+**trigger 关键词**:兄弟问"回忆 X / 昨天 Y / v3 skill 在不在 / 那个 commit 是什么"且**属于 hermes 自身能力** → 走本 skill §7/§8 流程(纯读)。**不要触发 OpenCode 派单**。
+
+**例外**:如果兄弟明确说"让 OpenCode agent 验证 X" → 那走 OpenCode 加载链,不在本 skill 范围。
+
+### 10. 🔴 4 源 cross-check 必跑(2026-08-20 实锤)
+
+**触发**:回答"项目级历史状态" + 多个源信息冲突时,**必须 4 源并查**才能定论:
+
+| 源 | 工具 | 用途 |
+|---|---|---|
+| git log | terminal `git log --grep` | 代码真状态(唯一权威) |
+| daily log | `笔记/memory/openclaw-archive/daily/<date>.md` | 当天落地动作全记录 |
+| state.db | sqlite3 + FTS5 | 对话上下文 + tool 调用 |
+| MEMORY 主表 | system prompt 注入 | 沉淀经验,允许过期 |
+
+**本会话踩**:8-19 daily log 全文无 Modal 修复记录,git log 有 `d6681051e`,MEMORY 主表有过期"待修"清单 → 三个源 2-1-1 冲突 → **必须立刻 reconcile**:
+- 主表过期 → patch 主表,以 git 为准
+- daily log 漏写 → 标记"daily log 缺口",非阻断但提示
+
+**禁止**:只查 1 个源就答 → 出错率高(本会话 8-20 第一轮"已修/待修"全错就是这个原因)
+
 ---
 
 ## 验证(ad-hoc 端到端,**非测试套件**)

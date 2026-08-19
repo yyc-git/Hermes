@@ -101,9 +101,10 @@ Select-String -Path "$env:HERMES_HOME\config.yaml" -Pattern "memory_char_limit"
 
 ### 兄弟说"接 git 到 Hermes"
 - 走 `gts-git-pull` skill 的逻辑（已包含迁移期 git 同步）
-- 范围只接 hermes 相关：`skills/` + `memories/` + `SOUL.md` + `USER.md`
-- **绝对排除**：`state.db` / `state.db-shm` / `state.db-wal` / `logs/` / `sessions/` / `cache/` / `image_cache/` / `audio_cache/` / `pairing/` / `sandboxes/` / `cron/` / `lsp/` / `hooks/` / `port-locks/` / `scripts/` / `desktop-ui.sqlite` / `kanban.db` / `projects.db` / `auth.json` / `auth.lock` / `processes.json` / `verification_evidence.db` / `.env` / `.update_check` / `models_dev_cache.json` / `ollama_cloud_models_cache.json` / `provider_models_cache.json` / `*.bak-*` 等
+- 范围只接 hermes 相关：`skills/` + `memories/` + `SOUL.md` + `USER.md` + `MEMORY.md` + `config.yaml`
+- **绝对排除**：`state.db` / `state.db-shm` / `state.db-wal` / `logs/` / `sessions/` / `cache/` / `image_cache/` / `audio_cache/` / `pairing/` / `sandboxes/` / `cron/` / `lsp/` / `hooks/` / `port-locks/` / `scripts/tmp_*` / `desktop-ui.sqlite` / `kanban.db` / `projects.db` / `auth.json` / `auth.lock` / `*.lock` / `processes.json` / `verification_evidence.db` / `.env` / `.update_check` / `models_dev_cache.json` / `ollama_cloud_models_cache.json` / `provider_models_cache.json` / `*.bak-*` / `.skills_prompt_snapshot.json` 等
 - 必写 .gitignore 在接 git 之前（先用本 skill 推荐的模板）
+- 🔴🔴🔴 **GitHub Push Protection 密钥扫描**（2026-08-19 实测）：skills/ 下的 SKILL.md 和 references/ 可能含真实 API key / secret（腾讯云 AKID、VolcEngine ark-xxx 等），push 会被 GitHub 拦截。**首次 commit 前必须**：(1) `git diff --cached` 检查含 `AKID` / `ark-` / 长字母数字串的行 (2) 替换为 `<YOUR_XXX_KEY>` 占位符 (3) `git commit --amend` 重写 (4) 再 push。已知触发模式：Tencent Cloud Secret ID (`AKID...`)、VolcEngine Ark API Key (`ark-...`)
 
 ### 兄弟说"skill_manage 拒了 / patch 不了"
 - 立刻停，**不要**反复试不同 action 组合

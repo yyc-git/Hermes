@@ -583,15 +583,17 @@ OpenCode Pro 出方案后，**必须先展示给我确认**，我说「OK」才�
 
 > 依据 `笔记/项目文档/changes/2026-07-28-manual-test-checkpoint/solution.md`
 
-> 🔴 全自动模式跳过 M，直接结束。
-> **但全自动模式退出条件：** 如果全自动 dispatch 后有 2 轮以上兄弟与 bot 交互（非进程 poll 反馈），
+> 🔴 **全自动模式下 M 阶段不跳过，而是移到最后执行**：C 验收完成后 → 先执行 R（反思）→ S（保存）→ 通知兄弟（自动步骤完成，准备手动测试）→ 再进 M（手动测试）→ M 完成后再执行 R（反思）→ S（保存）→ 通知（最终完成）。标准模式流程不变（C→M→R→S）。
+> **全自动模式退出条件：** 如果全自动 dispatch 后有 2 轮以上兄弟与 bot 交互（非进程 poll 反馈），
 > 视为自动退出全自动模式，M 阶段恢复生效。bot 应在检测到连续交互后重新进入 M 阶段。
 > 检测方式：上一条消息是兄弟发的（非 poll 反馈/系统消息）且本轮不是首次进入?
 > 则检查最近 3 条兄弟消息是否有 2 条以上非「OK」「继续」「部署」等简短确认 → 视为退出 auto。
 
 ### M-0 — 明确宣布进入 M 阶段
 
-> 🔴 **worktree 改动先 merge 回 dev（2026-08-17 兄弟拍板）**：本次 fix 若在 worktree 中实现（opencode-schedule 5️⃣ 规则：改 frontend/ 默认走 worktree），**进入 M 阶段前必须先**把 worktree 改动 commit + merge 回 dev —— 兄弟手动测试的就是 dev 代码，测试前未 merge = 测了个寂寞（2026-08-17 实锤被兄弟提醒）。merge 流程见 worktree-junction skill「完成后必须 merge 回主仓库」。全自动模式跳过 M 时：在 step-done B2 后、进 Phase C / 保存前执行 merge。
+> 🔴 **worktree 改动先 merge 回 dev（2026-08-17 兄弟拍板）**：本次 fix 若在 worktree 中实现（opencode-schedule 5️⃣ 规则：改 frontend/ 默认走 worktree），**进入 M 阶段前必须先**把 worktree 改动 commit + merge 回 dev —— 兄弟手动测试的就是 dev 代码，测试前未 merge = 测了个寂寞（2026-08-17 实锤被兄弟提醒）。merge 流程见 worktree-junction skill「完成后必须 merge 回主仓库」。全自动模式下：在 step-done B2 后、进 Phase C 前执行 merge。
+
+> 🔴 **全自动模式下**：C 验收完成后，先执行 R（反思）→ S（保存）→ 通知兄弟（自动步骤完成），然后再进入 M 阶段。
 
 **进入 M 阶段时，必须明确说出「进入 M 阶段（手动测试）」。**
 
@@ -669,6 +671,8 @@ OpenCode Pro 出方案后，**必须先展示给我确认**，我说「OK」才�
 > ```powershell
 > node scripts/skill-exec-manager.cjs step-done $sid --step-index M --step-name "手动测试"
 > ```
+
+> 🔴 **全自动模式下 M-4 完成后**：M 完成 → 执行 R（反思）→ S（保存）→ 通知兄弟（最终完成）。R 和 S 是工作流最后一步。
 
 ---
 

@@ -59,26 +59,20 @@ Yarn Cache 损坏修复(2026-08-19):包装出来是空壳(package.json+LICENSE�
 §
 Hermes Home 仓库(git@github.com:yyc-git/Hermes.git)已初始化并push(2026-08-19)。gts-submit-save + gts-save-memory 已改为双仓库提交：GTS-Play + Hermes Home。GitHub Push Protection 会扫描 skill 文件中的密钥(AKID/ark-xxx)，首次 commit 前必须脱敏。详见 hermes-home-state-management skill。
 §
-单机 frontend dev-server 启动命令是 `yarn webpack:dev-server`（在 packages/frontend 目录下），不是 `npx webpack serve`。2026-08-19 兄弟纠正。
-§
-前端 dev-server 启动命令：`cd packages/frontend && yarn webpack:dev-server`（不是 `npx webpack serve`）。worktree 里也一样。
-§
 🔴 webpack `export { x } from "y"` 仍生成 `let x = module.x` 立即赋值，**不能消除循环 TDZ**。修循环依赖必须在定义方改 `export function`（方案 B），不能在 re-export 层用 `export { } from`（方案 A 不可靠）。
 §
-🔴 worktree 中改前端代码后 webpack 可能读主仓(2026-08-19 Scene.ts TDZ 实锤):即使 cd 到 wt3 启动 yarn webpack:dev-server,webpack 的 source map 路径仍解析到 GTS-Play 主仓。改了 worktree 的文件但 bundle 是旧代码。正确流程:worktree commit → merge 回 dev → 从 dev 测试。验证:从 bundle 搜改过的函数名确认是新代码。
-§
-🔴 webpack dev-server 读文件路径：即使从 wt3 worktree 启动 `yarn webpack:dev-server`，webpack 实际读的是 GTS-Play 主仓的源码（source map 路径 `../../../GTS-Play/...`）。**wt3 里改源码无法通过 dev-server 测试，必须先 merge 回 dev 再测。** 根因未完全查清（可能 node_modules junction + resolve.symlinks:true 导致路径解析回主仓）。2026-08-19 实测确认。
-§
 hermes-session-read skill 已升级:主力数据源=state.db(sessions+messages表,C:\sqlite\sqlite3.exe查询),dump文件仅429限流时才有。给会话ID查会话→先sqlite3 state.db,找不到才查dump。skill已patch。(2026-08-19)
-§
-webpack dev-server 从 wt3 启动仍读 GTS-Play 主仓文件(source map路径=../../../GTS-Play/...)。wt3 改代码→dev-server不生效→必须merge到dev再测试。原因不明(可能node_modules junction+resolve.symlinks:true导致路径解析回主仓)。(2026-08-19)
 §
 React useEffect cleanup 时序坑(2026-08-19 prop fix):用 ref 标记「正在切换内容」防 onClose 误触发→失效,因为 cleanup 先执行 close()时 ref 还是 false。正解:antd-mobile Modal.show()返回handler支持replace()更新内容不触发onClose,两个effect分离:一个管开关([isShowProp]),一个管内容([currentPropItem])用handler.replace()。
 §
 🔴 webpack dev-server 从 worktree 启动但读主仓源码(2026-08-19 实锤):wt3 `node_modules` 是 junction→GTS-Play,`resolve.symlinks:true`+`resolve.modules:['node_modules']` 导致源文件解析回主仓。改 worktree 源码不 merge 回 dev → dev-server 看不到改动。测试必须先 merge。
 §
-🔴 webpack dev-server 路径陷阱(2026-08-19 prop fix 实锤):即使 cd 到 wt3 worktree 目录启动 dev-server,webpack 仍读 GTS-Play 主仓源码(source map 路径全部解析到 ../../../GTS-Play/...)。worktree 改动必须先 merge 回 dev,再从主仓启动 dev-server 测试。在 worktree 里改代码但 dev-server 从主仓跑 = 改了白改。根因未完全定位(node_modules junction + resolve.symlinks:true 可能相关),但解决方案确定:改主仓。
-§
-antd-mobile `<Modal visible={...}>` JSX 模式在 GTS-Play 导致白屏(2026-08-19):stopLoop 与 Three.js requestAnimationFrame 竞态。修复=改为 `Modal.show()` 命令式 API + useEffect 控制开关。已修:City prop modal;待修:setting modal/City.tsx:848 + MissionEnd/MissionFail/MissionComplete + Upgrade Mask。prop button 点击切换内容:用 handler.replace() 不触发 onClose。使用道具后刷新:effect 依赖加 refresh state `_`。
-§
 Yarn Cache 损坏修复(2026-08-19):C盘<3GB时yarn下载的tarball解压不完整→包是空壳(目录在但无代码)→后续install用旧integrity跳过→必须`--force`+清缓存(`rd /s /q`比`yarn cache clean`快100倍)+`--ignore-scripts`跳过postinstall失败。清缓存后C盘2.58→17.67GB。
+§
+🔴 webpack dev-server 路径陷阱(2026-08-19 实锤):即使 cd 到 wt3 worktree 目录启动 dev-server,webpack 仍读 GTS-Play 主仓源码(source map 全解析到 ../../../GTS-Play/...)。验证:bundle 里搜旧代码确认。解决:worktree 改动必须先 merge 回 dev 再从主仓测。教训:worktree 改了 ≠ dev-server 能看到。
+§
+Brief 防卡死:涉及 PMX 减面/verify 等计算密集操作的测试,jest 可能 >300s 超时卡死 agent bash 工具。brief 必须显式写「禁止跑 jest/BDD 测试,只改代码」或「只跑单个 --testNamePattern」。验证用 reduce.mjs + verify.mjs 手动执行
+§
+🔴 回忆类问题信源优先级(2026-08-20 实锤):git log = 唯一权威 > daily log / state.db > MEMORY 主表。主表是沉淀不是 git-tracked,容易和代码现状脱节(已踩:8-19 沉淀 antd-mobile Modal 修复清单,8-20 顺手答你时把已修的"待修"清单又吐出来)。发现 git ≠ 主表 → 以 git 为准,立刻 patch 主表。
+§
+antd-mobile Modal 白屏修复(commit **d6681051e** 2026-08-19):单机版✅ 全完成。City.tsx(setting+prop modal 改 Modal.show+replace)、Upgrade.tsx(Mask改useEffect+条件渲染,263行)、MissionComplete.tsx(Modal.show)。根因:stopLoop vs Three.js requestAnimationFrame 竞态。prop button 切换内容用 handler.replace() 不触发 onClose;使用道具后刷新 effect 依赖加 refresh state `_`。多人版 MultiplayerHall.tsx:806 gameOverVisible 仍 JSX 模式未改,不在本次修复范围。

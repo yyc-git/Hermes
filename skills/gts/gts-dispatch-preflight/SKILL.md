@@ -292,3 +292,39 @@ Agent 浪费 30+ 秒试错才回到 workdir 内路径。如果 brief 开头明�
 - ❌ React DevTools 报 Warning（只在某些版本有，不是稳定信号）
 
 **记忆点**：UI 类 bug，先花 10 秒做"import 源 vs JSX 调用"交叉检查 → 把信号写进 brief「已确认事实」段 → 立即 dispatch OpenCode Pro 验证。**不要 bot 自己出根因**——模式 D 命中不等于结论正确，prop 白屏的根因反转就是反例。
+
+## 🔴 模式 E：回答"改没改/修没修"必查 git,不信 MEMORY 沉淀(2026-08-20 实测)
+
+**陷阱**:兄弟问「X 修了没 / X 改了哪些 / 上次 fix 改了什么」类历史状态问题,bot 凭 MEMORY/daily log 沉淀直接报「已修 / 待修 / 改了 N 个文件」——MEMORY 写的是**某次 commit 时刻的快照**,但后续可能有 bug 修复 / 回归 / 重构让状态变化,而 MEMORY 不会自动追新。
+
+**实例(2026-08-20 实测)**:
+
+- 兄弟问「回忆昨天对 Modal 白屏的修复」
+- bot 凭 MEMORY 答「已修:City prop modal;待修:setting modal/City.tsx:848 + MissionEnd/MissionFail/MissionComplete + Upgrade Mask」
+- 兄弟立刻质疑「不是都修复完成了吗?」+ 给出 commit `7a7029a3` 锚点
+- 实测 `git log --grep="antd-mobile Modal"` → 真实 commit 是 `d6681051e`,3 个文件一次性修完(City.tsx/Upgrade.tsx/MissionComplete.tsx)
+- MEMORY 沉淀里的「待修清单」是**过期快照**,**昨天 commit 已全清**——bot 误导了兄弟
+
+**🔴 实战规则**(`gts-dispatch-preflight` 适用域扩展:任何对外断言不只是派工前):
+
+1. **回答"X 改没改 / X 修了什么"类问题前,先 git 查证**(不信记忆/MEMORY/daily/笔记)：
+   - `git log --all --oneline --grep="<关键词>" -20` 找真实 commit hash
+   - `git show --stat <sha>` 看真实改动文件 + diff 行数
+   - **不要抄 commit message 当真实改动**——message 可能漏写/夸大
+2. **MEMORY 沉淀的"待修清单"默认带「last_verified_at」语境**——超出 24h 必须 git 复查
+3. **回答格式应该含真实 commit hash + 改动文件 + diff 行数**,而不是「改了个大致内容」
+4. **如果 MEMORY 沉淀 vs git 实测不一致**:
+   - 立刻汇报兄弟"⚠️ MEMORY 沉淀 X,git 实测 Y,以 git 为准"
+   - 这是兄弟第一次纠正的强信号 → 同步 patch 相关 skill(MEMORY 沉淀 → 改名「策略快照」+ 加 last_verified_at 字段)
+5. **触发词**(本模式适用):「回忆」「上次」「昨天」「改了/修了/修复了 X 吗」「X 状态如何」「X 现在什么情况」
+
+**🔴 派工 checklist 的延伸(本模式应用)**:
+
+派工 brief 里写「X 已修 / X 未变」类历史断言,**同样必须 `git show <sha>` 实测**,不能信：
+- commit message 自报(模式 A 已覆盖)
+- agent 自报(模式 A 已覆盖)
+- **MEMORY 沉淀** ← 本模式新增
+- **daily log / 笔记 / OpenClaw archive** ← 本模式新增
+- **兄弟上下文口述**(兄弟也可能记错,实测最稳)
+
+**记忆点**:**任何"对外断言 X 改没改 / X 修了什么"前,先 git 查证**。MEMORY 是策略快照不是事实快照,带 timestamp 才有意义。兄弟质问"不是都修复了吗?"的根因 = bot 把 MEMORY 当事实,没 git 复查。

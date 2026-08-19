@@ -27,6 +27,18 @@ description: "查清「另一个 Hermes 会话在干什么 / 记忆有没有自�
 4. **可选**：`state.db`（SQLite）或 desktop-ui.sqlite 拿会话元数据
 5. **多会话时间线（「今天上午跑了哪些任务」类问题）**：`sessions` 表按 `started_at DESC` 排序即一天的任务清单（id/started_at/ended_at/model/api_call_count/estimated_cost_usd/title），一条 SQL 全出；再对重点会话跑 session-activity.cjs 看细节。比逐会话 grep 日志快一个量级
 6. **等另一会话结束再继续（「等 XX 结束后再干 Y」）**：`node <skill_dir>/scripts/wait-session-end.cjs <state.db> <sessionId> [maxMinutes=120]` 轮询 ended_at，结束即 exit 0；配合 `terminal(background=true, notify_on_complete=true)` 挂后台，结束自动收到通知，期间不占用聊天轮次
+7. **多会话等待 + 自动关机（「等下面会话完成后再关机」，2026-08-19 实测）**：`node <skill_dir>/scripts/wait-sessions-then-shutdown.mjs <sid1> <sid2> ... [--grace 60] [--max-h 12]` —— 轮询多个 Hermes 会话的 `ended_at`，全非空后执行 `shutdown /s /f /t <grace>` 强制关机。`--grace` 留取消窗口（反悔跑 `shutdown /a`），`--max-h` 防会话卡死永久挂机（超时也关机）。用 `terminal(background=true, notify_on_complete=true)` 挂后台。与 wait-session-end.cjs 的区别：支持多个会话 + 结束后自动关机。
+
+## 🔴 会话 ID 格式判库（2026-08-19 实测踩坑）
+
+兄弟给一个 session ID 时，**先看格式再选库**，格式判错 = 第一轮查询必然空手而归：
+
+| ID 格式 | 所属库 | 例 |
+|---------|--------|-----|
+| `YYYYMMDD_HHMMSS_<hash>`（`20260819_154411_174164`） | **Hermes** `state.db` 的 `sessions` 表 | 本会话兄弟给的 `20260819_154411_174164` / `20260819_153038_5c342c` |
+| `ses_<hash>`（`ses_fe6138993ffe...`） | **OpenCode** `opencode.db` 的 `session` 表 | dispatch 拿到的 sessionId |
+
+**本次实锤**：兄弟给两个 `20260819_*` 格式 ID，我第一反应查 opencode.db → 空结果，才意识到是 Hermes 会话，改查 state.db。OpenCode 的查询工具（`opencode db`/wait 脚本）对 Hermes ID 全部无效；Hermes 的 sessions 表也没有 `time_created`/`time_updated` 列（那是 OpenCode 的），活跃判定靠 `ended_at` 是否为空（见下方 🔴 ended_at 恒 NULL 的归档坑——但**等待结束**场景下 ended_at 非空就是可靠结束信号，两者不冲突：ended_at NULL 也可能结束（归档前），但非空 = 一定已结束，等待时用它没问题）。
 
 ## OpenCode 会话取证（提取 OpenCode 侧 session 报告）
 

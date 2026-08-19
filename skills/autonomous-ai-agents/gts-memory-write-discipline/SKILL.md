@@ -168,7 +168,7 @@ description: Hermes 记忆写入纪律(伞形 skill,2026-08-18 兄弟多次纠�
 - `hermes-session-forensics`:state.db 检索 / token 审计 / 归档 schema
 - `desktop-notify-protocol`:任何"需兄弟拍板"必先 notify.ps1 双通道
 - `gts-submit-save` / `gts-git-commit`:doc/ 保护红线同步(2026-08-18 改)
-- `gts-memory-search`:3 源(state.db FTS5 + skills/ ripgrep + 笔记/ ripgrep)轻量召回,每轮回复前模拟 Holographic prefetch
+- `gts-memory-search-v3` 伞形(state.db FTS5 + skills/ + 笔记/ + MEMORY_ARCHIVE 4 源,每轮回复前模拟 Holographic prefetch):**回答"项目级历史状态"前必走其 §8 判定矩阵 + git log 核验**(2026-08-20 实锤:跳过 git 凭 MEMORY 主表答"待修",已被 commit 修复);v3 自己有 `references/verify-query-templates.md`(四类问题 query 模板 + 反模式 + 验证流程)
 - 详细 state.db schema / 3 源架构 / ad-hoc 验证脚本 / 边界 case:`references/state-db-3-source-recall.md`
 
 ## 八、🔴 需兄弟拍板 = 必发 notify 通知(2026-08-18 拍板,最高优先级)

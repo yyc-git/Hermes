@@ -130,6 +130,40 @@ Get-Content <改动文件>           # 确认内容已更新
 - wt 分支基于旧 dev 时：merge-base == wt HEAD 说明 wt 是 dev 后代，三方合并只应用 wt 的新 commit，不会带回旧代码
 - 冲突 → 手工解后 `git commit`（仅当 dev 前进期间同文件被改）
 
+## 从 worktree 启动 dev-server（2026-08-19 兄弟拍板）
+
+> 🔴 **必须用 `yarn webpack:dev-server`**，不能用 `npx webpack serve`。原因：项目 webpack 配置通过 yarn scripts 定制（dev-server 配置、环境变量、resolve 路径等），`npx webpack serve` 用默认配置会丢失自定义设置。
+
+```powershell
+# ✅ 正确：从 worktree 的 frontend 目录启动
+cd D:\Github\<worktree>\packages\frontend
+yarn webpack:dev-server
+
+# ❌ 错误：npx webpack serve 用默认配置，丢失项目自定义设置
+cd D:\Github\<worktree>\packages\frontend
+npx webpack serve --port 7093
+```
+
+启动后验证：webpack 编译日志应显示 `compiled successfully`（无 ERROR），且 Content 目录指向 worktree 路径（`Content not from webpack is served from 'D:\Github\<worktree>\packages\frontend\src\resource'`）。
+
+### 🔴🔴 实测重大坑：webpack 可能读主仓而非 worktree（2026-08-19 Scene.ts TDZ 修复实锤）
+
+**现象**：在 worktree 目录启动 `yarn webpack:dev-server`，修改 worktree 里的源文件，浏览器报错不变（仍是旧代码）。
+
+**根因**：webpack 的 source map 路径全部解析到 `../../../GTS-Play/...`（主仓），说明 webpack 实际在读 **GTS-Play 主仓的文件**，不是 worktree 的。即使 `cd` 到 worktree 目录启动 dev-server，webpack 的模块解析链（`resolve.modules: ['node_modules']`）通过 node_modules junction 回到主仓，可能导致源文件也解析到主仓。
+
+**验证方法**：
+```powershell
+# 1. 启动 dev-server 后，从 bundle 确认文件来源
+$resp = Invoke-WebRequest -Uri "http://localhost:7093/" -TimeoutSec 10
+$mainJs = ([regex]::Matches($resp.Content, 'src="(static/js/main[^"]+)"'))[0].Groups[1].Value
+$resp2 = Invoke-WebRequest -Uri "http://localhost:7093/$mainJs" -TimeoutSec 15
+# 搜索你改的函数名，看 bundle 里是新代码还是旧代码
+$resp2.Content -match "你的函数名"
+```
+
+**结论**：在 worktree 中测试前端代码**不可靠**——改了 worktree 的文件，webpack 可能读主仓的旧版本。**正确流程**：worktree commit → merge 回 dev → 从 dev 启动 dev-server 测试。
+
 ## 验证
 
 ```powershell
