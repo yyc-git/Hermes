@@ -14,7 +14,7 @@ User (兄弟) prefers direct, concise answers; gets impatient when the agent spe
 §
 兄弟对token成本敏感:简单任务Flash级、复杂才Pro;bot主线不做重活(读>3文件一律dispatch);同类小任务合并dispatch;fix循环>2轮拆新session
 §
-🔴 恢复中断会话后dispatch前必须先清旧session(2026-08-19实锤):恢复后第一步opencode db查同任务活跃session→gts-opencode-stop(禁止直接delete,走skill正规流程)→确认零残留(三重验证)才dispatch新session。不能凭记忆判session存活,必须查DB。
+🔴 恢复中断会话后dispatch前必须先清旧session(2026-08-19实锤):恢复后第一步opencode db查同任务活跃session→gts-opencode-stop(禁止直接delete,走skill正规流程)→确认零残留(三重验证)才dispatch新session。不能凭记忆判session存活,必须查DB。兄弟原话「你为什么没有先删除旧的会话再dispatch啊？」
 §
 OpenCode调度:opencode-schedule skill(attach 4098)+wait脚本监控。详见skill。免费组:flash-free→hy3-free→mimo→nemotron-3-ultra→nemotron-3.5-lightning→laguna-s-2.1→火山→go。模型落盘:opencode-session-meta.mjs。免费模型状态:opencode-free-model-state.mjs
 §
@@ -56,3 +56,29 @@ Hermes 会话记录在 `E:\Hermes Agent CN Desktop\data\hermes-home\sessions\req
 wt1 worktree 的 node_modules 是 junction → GTS-Play 根的 node_modules（共享），修一次 = 所有 worktree 恢复。yarn cache 在 C:\Users\Administrator\AppData\Local\Yarn\Cache，大型 monorepo 可达数 GB，C 盘 <5GB 时易 corruption。Hermes 会话记录在 hermes-home/sessions/request_dump_*.json（429 限流快照，非完整对话），OpenCode 会话在 opencode.db session/part 表，两者不要混读。
 §
 Yarn Cache 损坏修复(2026-08-19):包装出来是空壳(package.json+LICENSE在,lib/bin缺)=缓存损坏。`--force`无效因仍从坏缓解压。修复:cmd /c "rd /s /q"直接删Yarn Cache目录( yarn cache clean太慢)> yarn install --force --ignore-scripts --mutex network。C盘Yarn Cache 6800+目录可占数GB。GTS-Play worktree(wt1/wt2/wt3)通过junction共享GTS-Play的node_modules,只需在根目录装一次。
+§
+Hermes Home 仓库(git@github.com:yyc-git/Hermes.git)已初始化并push(2026-08-19)。gts-submit-save + gts-save-memory 已改为双仓库提交：GTS-Play + Hermes Home。GitHub Push Protection 会扫描 skill 文件中的密钥(AKID/ark-xxx)，首次 commit 前必须脱敏。详见 hermes-home-state-management skill。
+§
+单机 frontend dev-server 启动命令是 `yarn webpack:dev-server`（在 packages/frontend 目录下），不是 `npx webpack serve`。2026-08-19 兄弟纠正。
+§
+前端 dev-server 启动命令：`cd packages/frontend && yarn webpack:dev-server`（不是 `npx webpack serve`）。worktree 里也一样。
+§
+🔴 webpack `export { x } from "y"` 仍生成 `let x = module.x` 立即赋值，**不能消除循环 TDZ**。修循环依赖必须在定义方改 `export function`（方案 B），不能在 re-export 层用 `export { } from`（方案 A 不可靠）。
+§
+🔴 worktree 中改前端代码后 webpack 可能读主仓(2026-08-19 Scene.ts TDZ 实锤):即使 cd 到 wt3 启动 yarn webpack:dev-server,webpack 的 source map 路径仍解析到 GTS-Play 主仓。改了 worktree 的文件但 bundle 是旧代码。正确流程:worktree commit → merge 回 dev → 从 dev 测试。验证:从 bundle 搜改过的函数名确认是新代码。
+§
+🔴 webpack dev-server 读文件路径：即使从 wt3 worktree 启动 `yarn webpack:dev-server`，webpack 实际读的是 GTS-Play 主仓的源码（source map 路径 `../../../GTS-Play/...`）。**wt3 里改源码无法通过 dev-server 测试，必须先 merge 回 dev 再测。** 根因未完全查清（可能 node_modules junction + resolve.symlinks:true 导致路径解析回主仓）。2026-08-19 实测确认。
+§
+hermes-session-read skill 已升级:主力数据源=state.db(sessions+messages表,C:\sqlite\sqlite3.exe查询),dump文件仅429限流时才有。给会话ID查会话→先sqlite3 state.db,找不到才查dump。skill已patch。(2026-08-19)
+§
+webpack dev-server 从 wt3 启动仍读 GTS-Play 主仓文件(source map路径=../../../GTS-Play/...)。wt3 改代码→dev-server不生效→必须merge到dev再测试。原因不明(可能node_modules junction+resolve.symlinks:true导致路径解析回主仓)。(2026-08-19)
+§
+React useEffect cleanup 时序坑(2026-08-19 prop fix):用 ref 标记「正在切换内容」防 onClose 误触发→失效,因为 cleanup 先执行 close()时 ref 还是 false。正解:antd-mobile Modal.show()返回handler支持replace()更新内容不触发onClose,两个effect分离:一个管开关([isShowProp]),一个管内容([currentPropItem])用handler.replace()。
+§
+🔴 webpack dev-server 从 worktree 启动但读主仓源码(2026-08-19 实锤):wt3 `node_modules` 是 junction→GTS-Play,`resolve.symlinks:true`+`resolve.modules:['node_modules']` 导致源文件解析回主仓。改 worktree 源码不 merge 回 dev → dev-server 看不到改动。测试必须先 merge。
+§
+🔴 webpack dev-server 路径陷阱(2026-08-19 prop fix 实锤):即使 cd 到 wt3 worktree 目录启动 dev-server,webpack 仍读 GTS-Play 主仓源码(source map 路径全部解析到 ../../../GTS-Play/...)。worktree 改动必须先 merge 回 dev,再从主仓启动 dev-server 测试。在 worktree 里改代码但 dev-server 从主仓跑 = 改了白改。根因未完全定位(node_modules junction + resolve.symlinks:true 可能相关),但解决方案确定:改主仓。
+§
+antd-mobile `<Modal visible={...}>` JSX 模式在 GTS-Play 导致白屏(2026-08-19):stopLoop 与 Three.js requestAnimationFrame 竞态。修复=改为 `Modal.show()` 命令式 API + useEffect 控制开关。已修:City prop modal;待修:setting modal/City.tsx:848 + MissionEnd/MissionFail/MissionComplete + Upgrade Mask。prop button 点击切换内容:用 handler.replace() 不触发 onClose。使用道具后刷新:effect 依赖加 refresh state `_`。
+§
+Yarn Cache 损坏修复(2026-08-19):C盘<3GB时yarn下载的tarball解压不完整→包是空壳(目录在但无代码)→后续install用旧integrity跳过→必须`--force`+清缓存(`rd /s /q`比`yarn cache clean`快100倍)+`--ignore-scripts`跳过postinstall失败。清缓存后C盘2.58→17.67GB。
