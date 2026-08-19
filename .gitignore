@@ -1,0 +1,60 @@
+# Hermes home 同步(兄弟2026-08-18 拍板)
+# 大文件 / 凭证 / 运行时数据全部 ignore
+# 进仓的:MEMORY.md / SOUL.md / USER.md / config.yaml / skills/ / scripts/ / memories/
+
+# === 数据库(SQLite,运行时数据)===
+*.db
+*.db-shm
+*.db-wal
+*.db.init.lock
+*.sqlite
+*.sqlite.bak-*
+desktop-ui.sqlite*
+
+# === 凭证 / 认证状态 / 锁(API key 不能进仓)===
+.env
+auth.json
+auth.lock
+.update_check
+processes.json
+config.yaml.bak-*
+config.yaml.*.*
+cron/.jobs.lock
+cron/.tick.lock
+cron/ticker_heartbeat
+cron/ticker_last_success
+
+# === 运行时缓存 / LSP / 日志 / 临时 ===
+.cache/
+cache/
+audio_cache/
+image_cache/
+lsp/
+logs/
+sessions/
+sandboxes/
+.port-locks/
+pairing/
+hooks/
+
+# === 模型缓存 ===
+models_dev_cache.json
+ollama_cloud_models_cache.json
+provider_models_cache.json
+
+# === skill hub 索引缓存(运行时生成)===
+skills/.hub/
+skills/.hub.lock
+skills/.hub.lock-*
+skills/.usage.json
+skills/.usage.json.lock
+skills/.archive/
+skills/.bundled_manifest
+
+# === 系统文件 ===
+Thumbs.db
+.DS_Store
+desktop.ini
+# === lock / tmp ===
+*.lock
+scripts/tmp_*

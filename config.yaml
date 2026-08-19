@@ -1,0 +1,45 @@
+model:
+  provider: minimax-cn
+  default: MiniMax-M3
+  base_url: https://api.minimaxi.com/anthropic
+  api_mode: anthropic
+  api_key: sk-5a95c04ccb534cc1af58ab5dc9f026c9
+auxiliary:
+  vision:
+    provider: opencode-go
+    model: kimi-k2.7-code
+_config_version: 33
+mcp_servers:
+  harness_plugin:
+    url: http://127.0.0.1:8090/mcp
+    enabled: true
+compression:
+  threshold: 0.35
+memory:
+  memory_char_limit: 30000
+agent: {}
+approvals:
+  mode: 'off'
+providers:
+  volcark:
+    api: https://ark.cn-beijing.volces.com/api/coding/v3
+    name: Volcengine Ark
+    key_env: ARK_CODING_API_KEY
+    transport: chat_completions
+    default_model: deepseek-v4-flash-ga-260731
+    discover_models: true
+  xiaomi-token-plan-cn:
+    api: https://token-plan-cn.xiaomimimo.com/v1
+    name: Xiaomi MiMo Token Plan (CN)
+    key_env: XIAOMI_TOKEN_PLAN_API_KEY
+    transport: chat_completions
+    default_model: mimo-v2.5
+    discover_models: true
+  xiaomi-token-plan-pro:
+    api: https://token-plan-cn.xiaomimimo.com/v1
+    name: Xiaomi MiMo Token Plan Pro
+    key_env: XIAOMI_TOKEN_PLAN_API_KEY
+    transport: chat_completions
+    default_model: mimo-v2.5-pro
+    discover_models: true
+memory_char_limit: 16000
