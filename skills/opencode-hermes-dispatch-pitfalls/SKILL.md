@@ -28,11 +28,27 @@ description: "OpenCode 调度实战坑（Hermes / PowerShell 环境, 2026-08-19 
 
 ---
 
-## 🔴 兄弟硬偏好（违反即浪费 token, 兄弟会质问）
+## 🔴 兄弟硬偏好(违反即浪费 token, 兄弟会质问)(2026-08-20 拍板版)
 
-1. **免费时段（北京 9-12 / 14-18）必须用免费组首选 `opencode/deepseek-v4-flash-free`**，不是火山 Pro，不是付费兜底版。
-2. **付费版（`opencode-go/*`）仅在火山/免费组都挂时用**。opencode.json 默认 model = `opencode-go/deepseek-v4-flash`（付费兜底），**任何 dispatch 不显式 `-m` 都会 fallback 到它**。
-3. 兄弟每次问「怎么样了」必须 30s 内回答 DB 状态或产物清单，不能让兄弟等。
+**模型优先级(Pro 场景,任何 fix/feat/plan-review/root-cause 默认走 Pro)**:
+1. 首选 `volcark/deepseek-v4-pro-ga-260813`(火山 Pro)
+2. 火山挂了 → `mimo-v2.5-pro`
+3. mimo 挂了 → `opencode-go/deepseek-v4-pro`(**仅兜底,从不首选**)
+
+**模型优先级(Flash 场景,实施型任务 / 简单 fix)**:
+1. 免费组首选 `opencode/deepseek-v4-flash-free`(按 `opencode-free-model-state` 状态文件轮换: flash-free→hy3-free→mimo→nemotron-3-ultra→nemotron-3.5-lightning→laguna-s-2.1)
+2. 免费组全挂 → `volcark/deepseek-v4-flash`(火山 flash)
+3. 火山也挂 → `opencode-go/deepseek-v4-flash`(**仅兜底,从不首选**)
+
+**铁律**:**`opencode-go/*` 永远兜底**。dispatch 命令**必须** `-m` 显式走优先级第一位,挂了就按 2-3 步走,**不要省事直接 opencode-go**。
+
+**opencode.json 默认 model 陷阱**:`~/.config/opencode/opencode.json` 顶层 `"model": "opencode-go/deepseek-v4-flash"` 是 server 默认值,CLI 不传 `-m` 就 fallback 到它(付费兜底)。**任何 dispatch 不显式 `-m` 都会违反兄弟硬偏好**。
+
+**兄弟期望的 dispatch 行为**:
+- 问"怎么样了" + bot 查 DB → 看到 `model:"opencode-go/deepseek-v4-..."` 不应该出现(除非优先级 1-2 都挂了)
+- 兄弟默认信任 bot 用了"对的"模型 → bot 不能让信任白给
+
+**兄弟每次问「怎么样了」必须 30s 内回答 DB 状态或产物清单,不能让兄弟等**。
 
 ---
 

@@ -8,7 +8,7 @@ description: "OpenCode 派工防御加固:permission auto-reject 防卡死、Pro
 > 触发场景:任何派工前 / 派工中监控 / 派工后核对(本 skill 是其他派工 skill 的加固层,**引用而非替代**)
 > 核心:`opencode-schedule` 提供了协议层(模型选择/dispatch 命令/wait 脚本),本 skill 沉淀实战防御层(perm-deny / 主动轮询 / 跨仓边界 / 状态核对)
 
-## 🔴 6 条防御铁律(2026-08-19 兄弟定稿血泪)
+## 🔴 8 条防御铁律(2026-08-19 兄弟定稿血泪 + 2026-08-20 增补 2 条)
 
 ### 铁律 1:session 状态必须主动核对(不要等兄弟指出)
 
@@ -137,7 +137,29 @@ opencode run "请列出你在当前 surge prompt 里能看到的全部 skill 名
 
 **反模式**:改 hermes-home skill → 重启 4098 → 以为生效 → 完成"修复" → 兄弟 3 天后再次质问"为什么没生效" → 浪费时间
 
-## 📋 派工 checklist(整合 8 条铁律)
+### 铁律 9:模型优先级铁律(2026-08-20 兄弟拍板,opencode-go 永远兜底)
+
+**触发条件**:任何 `opencode run -m <model>` dispatch 命令
+
+**Pro 场景**(fix/feat/plan-review/root-cause 默认走 Pro):
+1. 首选 `volcark/deepseek-v4-pro-ga-260813`(火山 Pro)
+2. 火山挂了 → `mimo-v2.5-pro`
+3. mimo 挂了 → `opencode-go/deepseek-v4-pro`(**仅兜底,从不首选**)
+
+**Flash 场景**(实施型任务 / 简单 fix):
+1. 免费组首选 `opencode/deepseek-v4-flash-free`(按 `opencode-free-model-state` 状态文件轮换: flash-free→hy3-free→mimo→nemotron-3-ultra→nemotron-3.5-lightning→laguna-s-2.1)
+2. 免费组全挂 → `volcark/deepseek-v4-flash`(火山 flash)
+3. 火山也挂 → `opencode-go/deepseek-v4-flash`(**仅兜底,从不首选**)
+
+**铁律**:`opencode-go/*` 永远兜底,从不首选。dispatch 命令**必须**显式 `-m` 走优先级第一位,挂了就按 2-3 步走。
+
+**反模式**:凭印象写 `-m opencode-go/deepseek-v4-pro` — 兄弟会质问"为什么没用火山的模型?"(2026-08-20 实际拍桌)。
+
+**检测**:dispatch 后查 `session.model` 字段,`providerID="opencode-go"` 必须非空且**不是当前唯一在跑的**。如果整个 session 唯一在跑的就是 opencode-go,要么优先级 1-2 全挂了(罕见),要么就是凭印象派的(常见违规)。
+
+**关联**:详细规则见 `gts-opencode-dispatch-pitfalls` 教训 3 + `opencode-hermes-dispatch-pitfalls` 兄弟硬偏好(2026-08-20 拍板版)。
+
+## 📋 派工 checklist(整合 9 条铁律)
 
 派工前 30 秒必须过一遍:
 
@@ -151,7 +173,8 @@ opencode run "请列出你在当前 surge prompt 里能看到的全部 skill 名
 | 6 | 多任务已拆并行 session? | ✅ |
 | 7 | 状态表格列出所有 session 真实状态(not 上一条通知)? | ✅ |
 | 8 | dispatch 命令**没**用 `--command` flag?消息走 positional? | ✅ |
-| 9 | 改 hermes-home skill 后验证过 surge prompt 实际包含? | ✅ |
+| 9 | `-m` 走兄弟 8-20 拍板优先级(Pro 火山→mimo→go / Flash 免费→火山→go)?opencode-go 仅兜底? | ✅ |
+| 10 | 改 hermes-home skill 后验证过 surge prompt 实际包含? | ✅ |
 
 ## 🚫 反模式总结(本会话反复踩过的坑)
 

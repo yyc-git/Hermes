@@ -16,9 +16,7 @@ User (兄弟) prefers direct, concise answers; gets impatient when the agent spe
 §
 🔴 恢复中断会话后dispatch前必须先清旧session(2026-08-19实锤):恢复后第一步opencode db查同任务活跃session→gts-opencode-stop(禁止直接delete,走skill正规流程)→确认零残留(三重验证)才dispatch新session。不能凭记忆判session存活,必须查DB。兄弟原话「你为什么没有先删除旧的会话再dispatch啊？」
 §
-OpenCode调度:opencode-schedule skill(attach 4098)+wait脚本监控。详见skill。免费组:flash-free→hy3-free→mimo→nemotron-3-ultra→nemotron-3.5-lightning→laguna-s-2.1→火山→go。模型落盘:opencode-session-meta.mjs。免费模型状态:opencode-free-model-state.mjs
-§
-OpenCode dispatch 标准流程(2026-08-19 固化):写 `.tmp-dispatch-<task>.cjs` → Node spawn(oc,[brief,'-m','<model>','--attach','http://localhost:4098','--title','<t>','--no-replay','--auto','--dir','<dir>']) + 独立 XDG_DATA_HOME(temp) + OPENCODE_DB 指回原路径。**Bun log 锁根治**(2026-08-19):多进程写同一 opencode.log→新 CLI FileSystem.open 失败。dispatch 前设 XDG_DATA_HOME 独立 temp。§dispatch 后15s查DB拿sessionId;30s查event确认model;wait DONE后必须sqlite3查part+git log核对。wait脚本坑:step-finish reason=tool-calls≠stop→false positive DONE→idle timeout 调1800s+。免费组全挂→火山flash。详见opencode-schedule skill。
+OpenCode调度:opencode-schedule skill(attach 4098)+wait脚本监控(ms单位,54100s=90min)。**模型优先级(2026-08-20 兄弟拍板)**:Pro=火山→mimo→go;Flash=免费组轮换→火山→go。**opencode-go仅兜底,从不首选**。详见4个dispatch skill(已patch):gts-opencode-dispatch-hardening 铁律9 + opencode-dispatch-pitfalls 教训3 + opencode-hermes-dispatch-pitfalls 兄弟硬偏好(2026-08-20版) + gts-dispatch-preflight argv终极模板。
 §
 OpenCode session活跃判定:100%信DB time_updated(>now-600000),勿用Web UI字段。4098不热加载provider/skill配置→改完必须重启。详见opencode-model-smoke-test skill
 §
@@ -76,3 +74,9 @@ Brief 防卡死:涉及 PMX 减面/verify 等计算密集操作的测试,jest 可
 🔴 回忆类问题信源优先级(2026-08-20 实锤):git log = 唯一权威 > daily log / state.db > MEMORY 主表。主表是沉淀不是 git-tracked,容易和代码现状脱节(已踩:8-19 沉淀 antd-mobile Modal 修复清单,8-20 顺手答你时把已修的"待修"清单又吐出来)。发现 git ≠ 主表 → 以 git 为准,立刻 patch 主表。
 §
 antd-mobile Modal 白屏修复(commit **d6681051e** 2026-08-19):单机版✅ 全完成。City.tsx(setting+prop modal 改 Modal.show+replace)、Upgrade.tsx(Mask改useEffect+条件渲染,263行)、MissionComplete.tsx(Modal.show)。根因:stopLoop vs Three.js requestAnimationFrame 竞态。prop button 切换内容用 handler.replace() 不触发 onClose;使用道具后刷新 effect 依赖加 refresh state `_`。多人版 MultiplayerHall.tsx:806 gameOverVisible 仍 JSX 模式未改,不在本次修复范围。
+§
+🔴 hermes 读资料 vs OpenCode 加载链(2026-08-20 实锤):兄弟问"回忆 X / v3 skill 在不在 / 昨天 commit" → **hermes 自身 read_file 0 配置直读**(~/.hermes/skills/gts-memory-search-v3/SKILL.md 即时生效)。**绝不要派 OpenCode agent 验证 v3 skill 是否在 OpenCode surge prompt** — 那是 OpenCode 加载链问题(`.opencode/opencode.json` 的 `agent.build.permission.skill` allowlist),跟 hermes 读资料能力无关。判错题 = 浪费时间 + 兄弟拍桌。
+§
+🔴 `opencode run` argv 3 坑(2026-08-20 实测,已落 gts-dispatch-preflight):① `--command` 是 OpenCode 注册命令,普通 message 必须 positional;② `--attach` 必须带 `http://localhost:4098`;③ `--no-replay` 在某些 session 触发 BUN `UnknownError` 崩在 SessionPrompt.command → 派工默认不加。完整模板见 gts-dispatch-preflight §「argv 终极清单」。任何 dispatch 失败 = argv 坑,先看 CLI 错误第一行。
+§
+🔴 wait-opencode-session.mjs 参数单位是 **ms** 不是 s(2026-08-20 实锤):`<sessionID> [maxWaitMs] [stableMs]`。我之前传 5400/1800 当秒,实际 5400ms = 5.4s,30s 后就 TIMEOUT。**Pro 思考期 → maxWaitMs=5400000(90min),stableMs=300000(5min idle)**。gts-auto 主表/skill 文字写"maxWaitSec"是错的,跟脚本不一致 → 脚本以源码为准。完整 dispatch 模板见 gts-dispatch-preflight / gts-opencode-dispatch-pitfalls。

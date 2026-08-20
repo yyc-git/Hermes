@@ -327,4 +327,69 @@ Agent 浪费 30+ 秒试错才回到 workdir 内路径。如果 brief 开头明�
 - **daily log / 笔记 / OpenClaw archive** ← 本模式新增
 - **兄弟上下文口述**(兄弟也可能记错,实测最稳)
 
-**记忆点**:**任何"对外断言 X 改没改 / X 修了什么"前,先 git 查证**。MEMORY 是策略快照不是事实快照,带 timestamp 才有意义。兄弟质问"不是都修复了吗?"的根因 = bot 把 MEMORY 当事实,没 git 复查。
+**记忆点**：**任何"对外断言 X 改没改 / X 修了什么"前,先 git 查证**。MEMORY 是策略快照不是事实快照,带 timestamp 才有意义。兄弟质问"不是都修复了吗?"的根因 = bot 把 MEMORY 当事实,没 git 复查。
+
+## 🔴 `opencode run` argv 踩坑终极清单(2026-08-20 实测,3 条并列)
+
+**陷阱**:bot 写 Node `spawn(oc, [...args])` 派工时,OpenCode CLI 的 argv 解析有 3 个隐藏坑,任何一个踩了都导致 dispatch 失败 + 留 stale session 污染 DB。
+
+### 坑 1: `--command` 是 OpenCode 命令调用,不是普通 message
+
+OpenCode CLI 把 `--command` 视为**注册命令关键字**(init / review / customize-opencode / gts-* 等),不是 message 文本。
+
+```javascript
+// ❌ 错误(2026-08-20 实测,OpenCode 报 "Command not found: \"<message>\". Available commands: ..."):
+spawn(oc, ['run', '--command', '请按 brief 输出方案', '--file', brief, ...])
+// → server 端 error: Unexpected server error,ref=err_xxx
+// → DB 留 stale session(model=空),需要手动 delete
+```
+
+```javascript
+// ✅ 正确: 普通 message 用 positional,yargs 把它当 `message..` 数组
+spawn(oc, ['run', '请按 brief 输出方案', '--file', brief, ...])
+```
+
+**派工 checklist 加一条**:
+- [ ] brief 派工 spawn argv 第一项 `message` **必须是 positional**,不能 `--command <message>`
+- [ ] `--command` 只用于 OpenCode 注册命令(init/review/gts-xxx),由 OpenCode CLI 解析
+
+### 坑 2: `--attach` 必须带 `http://` 前缀(已存在,放在这里再提醒)
+
+```javascript
+// ❌ 错误:
+spawn(oc, ['run', '--attach', '4098', ...])
+// → server 报 "Failed to construct 'Request': Invalid URL \"4098/session\""
+
+// ✅ 正确:
+spawn(oc, ['run', '--attach', 'http://localhost:4098', ...])
+```
+
+### 坑 3: `--no-replay` 在某些 session 触发 BUN 内部崩
+
+2026-08-20 实测:`opencode run --no-replay --attach http://localhost:4098 --title "..."` + 中文 message → `SessionPrompt.command` 在 `B:/~BUN/root/chunk-46zs0me7.js:1094:15735` 抛 `UnknownError: UnknownError`,DB 留 stale session(model=空)。
+
+**避开法**:本会话测试下来,**不用 `--no-replay`** 派工也能正常(普通 `message` 模式);不确定 `--no-replay` 是否必须时,先不加,等结果稳定再补。
+
+### 派工 argv 终极模板(2026-08-20 跑通版)
+
+```javascript
+const args = [
+  'run',                                          // 子命令
+  '请按 brief 文件执行任务',                        // positional message (坑 1)
+  '--file', briefPath,                            // 附件
+  '--dir', projectDir,                            // 工作目录
+  '--attach', 'http://localhost:4098',            // server URL (坑 2)
+  '-m', 'volcark/deepseek-v4-pro-ga-260813',     // 模型 (8-20 兄弟拍板:Pro 优先火山,opencode-go 兜底)
+  '--title', 'gts-dev-fix-<task>-<phase>',        // session 标题
+  '--auto',                                       // auto-approve permissions
+  // ❌ 不要 --no-replay (坑 3,可能 BUN 崩)
+  // ❌ 不要 --command (BUN 内部 UnknownError)
+];
+
+// 兄弟 8-20 拍板 模型优先级(2026-08-20):
+//   Pro:   volcark/deepseek-v4-pro-ga-260813 → mimo-v2.5-pro → opencode-go/deepseek-v4-pro (兜底)
+//   Flash: opencode/<free组: flash-free→hy3-free→mimo→nemotron-3-ultra→nemotron-3.5-lightning→laguna-s-2.1> → volcark/...-flash → opencode-go/deepseek-v4-flash (兜底)
+// opencode-go /* 是兜底,从不首选
+```
+
+**记忆点**:dispatch 失败 = 90% 是 argv 坑。先看 CLI 错误第一行(message / URL / command),对照上表 3 条命中其一 → 修 spawn argv,**不要猜测 server 逻辑**。

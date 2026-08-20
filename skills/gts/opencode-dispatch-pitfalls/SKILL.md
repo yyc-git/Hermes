@@ -29,7 +29,8 @@ related_skills: []
 | `Get-Content brief.md \| opencode run ...` | 永远挂起、CLI 不退 | Windows pipe 在 `exec(background=true)` 下冷启动竞态；CLI 等 agent 处理完才返回 |
 | `Start-Process opencode.exe -ArgumentList @('run', '-f', brief.md, ...)` | log 空、进程秒退 | `-f` flag 在 attach 模式 + 多文件 args 场景解析异常 |
 | `cmd /c "opencode run $brief ..."` | brief 被截断、CLI fallback 到 server 默认 model | `cmd.exe` 不支持多行字符串 → `$brief` 截断成第一行 → CLI 缺 message → 用 server 默认 `opencode-go/deepseek-v4-flash`（付费兜底） |
-| `bash -c "...sed ... \$brief ..."` | 路径转义错误、dispatch 不发 | bash 嵌套引号 + 多行 brief 在 PS→bash 边界极易破坏 |
+| `bash -c "...sed ... $brief ..."` | 路径转义错误、dispatch 不发 | bash 嵌套引号 + 多行 brief 在 PS→bash 边界极易破坏 |
+| `--command "请按 brief 执行..."` 想走 brief message | `Error: Command not found: "<msg>". Available commands: init, review, ...` | **`--command` 是 OpenCode 1.18.x 注册命令**(init/review/customize-opencode/...),**不是 message 字段**。普通 message 必须用 positional `message..` 或 `--file` 附件,见下方表下解法 |
 
 ### ✅ 2026-08-19 实测新姿势(prop-modal-fix-impl 修复成功):`--file .opencode-brief.md` + 简短 message
 
@@ -111,11 +112,21 @@ node .tmp-dispatch-<task>.cjs 2>&1 | Out-File $env:TEMP\dispatch-<task>.log
 - windowsHide:true（不弹黑色 console 窗口）
 - 跑完确认 log 首行含 `> build · <model-name>`（不是 `opencode run [message..]` help 文本）= dispatch 真发出
 
-## 🔴 教训 3：CLI 默认 model fallback 陷阱
+## 🔴 教训 3:CLI 默认 model fallback 陷阱 + 兄弟 8-20 拍板模型优先级
 
-**根因**：`C:\Users\Administrator\.config\opencode\opencode.json` 顶层 `"model": "opencode-go/deepseek-v4-flash"` 是 server 默认值，CLI 不传 `-m` 就用它。OpenCode 不会自动按兄弟免费时段偏好选免费组。
+**根因**:`C:\Users\Administrator\.config\opencode\opencode.json` 顶层 `"model": "opencode-go/deepseek-v4-flash"` 是 server 默认值,CLI 不传 `-m` 就用它。OpenCode 不会自动按兄弟免费时段偏好选免费组。
 
-**兄弟硬偏好**：免费时段用 `opencode/deepseek-v4-flash-free`；**付费版是最后兜底，不是首选**（见 6️⃣ 时段模型优先级）。
+**兄弟硬偏好(2026-08-20 拍板)** — **Pro 场景**:
+1. 首选 `volcark/deepseek-v4-pro-ga-260813`(火山 Pro)
+2. 火山挂了 → `mimo-v2.5-pro`
+3. mimo 挂了 → `opencode-go/deepseek-v4-pro`(opencode-go 仅兜底)
+
+**兄弟硬偏好(2026-08-20 拍板)** — **Flash 场景**:
+1. 免费组(按顺序): `opencode/deepseek-v4-flash-free` → `opencode/hy3-free` → `mimo` → `nemotron-3-ultra` → `nemotron-3.5-lightning` → `laguna-s-2.1`
+2. 免费组全挂 → `volcark/deepseek-v4-flash`(火山 flash)
+3. 火山也挂 → `opencode-go/deepseek-v4-flash`(opencode-go 仅兜底)
+
+**铁律**:**`opencode-go/*` 永远兜底,从不首选**。dispatch 前**显式** `-m` 走优先级第一位,挂了就按兄弟硬偏好 2-3 步走,**不要**省事直接 opencode-go。**付费版是最后兜底,不是首选**。
 
 **🔴 dispatch 后必须查 session.model 字段验证**：
 
@@ -227,3 +238,69 @@ Test-Path "D:\Github\GTS-Play\.opencode-session-meta\<sid>-<title>.json"
 - **不推荐**：杀 server 重启（会断所有活跃 session）；XDG_DATA_HOME 隔离是零干扰方案
 
 **关联**：审核报告 false-negative 教训（agent 跨仓读被拒后基于 brief 推理、可能凭空捏造 bug）见 `gts-code-review` skill"审核报告可能 false negative"段——bot 转达前必须 ad-hoc 独立验证最高优先级条目。
+
+## 🔴 教训 6：wait-opencode-session.mjs 参数单位是 **ms** 不是 s（2026-08-20 实锤）
+
+**症状**：dispatch Pro 后启动 wait 脚本后台盯，**30 秒后 wait 报 "TIMEOUT max wait reached" 退出 1**。但 DB `session.time_updated` 仍在涨（Pro 在推理中）—— wait 脚本误报 timeout,等真要命的 80 分钟思考期到了反而没盯。
+
+**根因**：wait 脚本签名是 `node scripts/wait-opencode-session.mjs <sessionID> [maxWaitMs] [stableMs]`,**单位是毫秒**。我之前按记忆传 `5400 1800`(以为是秒),实际 **5400ms = 5.4 秒**,立刻触发 maxWaitMs 超时。gts-auto 主表和 skill 文字里写"maxWaitSec"是**错的**,跟脚本源码不一致 → 以脚本源码为准。
+
+**✅ 正确参数(Pro 思考期至少 30min,推荐 90min)**:
+
+```powershell
+node scripts/wait-opencode-session.mjs <sid> 5400000 300000 --exit-on-stuck --title "<任务名>"
+#                                                                       ↑        ↑
+#                                                                       maxWaitMs stableMs
+#                                                                       90min    5min idle
+```
+
+- **Pro 思考期静默**(gemini-3 系列 + 全网知识检索)可能 60-80 分钟无 part 更新 → maxWaitMs **至少 3,600,000(60min)**,推荐 5,400,000(90min)
+- **stableMs = 300,000(5min)** 判定 idle 完成。Pro/max 变体输出 `reasoning` 事件时 wait 知道不算 idle,自动重置计时器
+- **wait 脚本退出 1 不等于 session 死**(gts-auto 铁律):DB 查 `session.time_updated` 在涨 = 推理中,继续等;不在涨 = 真死,查 `part` 表找根因
+- **wait 脚本必须 notify_on_complete=true + background=true**(gts-auto §poll 监控策略主监控),否则 turn 结束就拿不到结果
+
+**🚨 三个 skill 文字与脚本不一致,需要 reconcile**:
+
+| 位置 | 写的 | 实际 |
+|------|------|------|
+| gts-auto 主表 | "maxWaitSec" | 源码是 ms |
+| gts-auto SKILL.md | "wait-<sid> <maxWaitSec> <idleTimeoutSec>" | 源码是 ms |
+| opencode-session-ops | "wait 脚本 step-finish 立即 DONE" | 对,但脚本 timeout 参数仍写 ms |
+
+**patch 思路**:任何 dispatch wait 都用 `node scripts/wait-opencode-session.mjs --help` 验证一遍签名(脚本源码是 ground truth),不要凭主表/skill 记忆传参。
+
+**🔴 关联**:`gts-auto` 主表 + `gts-auto` SKILL.md `§poll 监控策略`段 + `opencode-session-ops` 都需要 reconcile "maxWaitSec" → "maxWaitMs" 措辞。本 skill 落地 8-20 实测模板,主表/skills 留 R 阶段统一 patch(避免本会话多 patch 抢散)。
+
+**🔴 wait 脚本 30s 真超时,DB 仍在涨的恢复路径**:
+
+```powershell
+# 1. 确认 session 活着
+opencode db "SELECT id, time_updated, (time_updated - strftime('%s','now')*1000) AS age_ms FROM session WHERE id='<sid>'"
+# 2. age_ms 绝对值 < 600000(10min) → 在跑,重启 wait(参数改对)
+node scripts/wait-opencode-session.mjs <sid> 5400000 300000 --exit-on-stuck --title "<重新盯>" 2>&1
+# 3. age_ms > 1800000(30min) → 停了,发「继续」:opencode run -s <sid> -m <原model> --attach ...
+```
+
+## 🔴 教训 7：hermes 验证自身资料 ≠ 派 OpenCode 验证 OpenCode 加载链(2026-08-20 兄弟纠正)
+
+**兄弟原话**："你不需要读取 opencode 的记忆,只需要读取你的会话记忆以及 daily log、笔记、MEMORY.md 等相关记忆和资料"
+
+**典型蹲坑场景**:兄弟问"回忆 X / v3 skill 在不在 / 昨天 commit 是什么" → bot 写了 `verify-skill-load.mjs` 脚本去测 `~/.opencode/opencode.json` 的 skill 路径配置 + 4098 /api/skill 是否列出。
+
+**🔴 错在哪**:
+
+- hermes 自身 `read_file <hermes-home>/skills/gts-memory-search-v3/SKILL.md` 就是**直接读 v3 skill 完整内容**,0 配置即时生效(主表踩坑 2026-08-20)
+- bot 测的是 **OpenCode server 加载链**(`agent.build.permission.skill` allowlist) — 这是 OpenCode 派单时 surge prompt 里有没有该 skill,跟 **hermes 能不能读 v3 skill** 是两件事
+- 派 OpenCode 验证 OpenCode 加载链 = 错题 + 浪费一轮 + 兄弟拍桌
+
+**铁律**(巩固 `gts-bot-role-boundary` 边界):
+
+| 兄弟问 | 走 hermes 自身工具 | 走 OpenCode 派单 |
+|--------|-------------------|------------------|
+| "回忆昨天 X 修复" | ✅ git log + read_file 笔记 + read_file skill | ❌ |
+| "v3 skill 在不在" | ✅ `read_file skills/gts-memory-search-v3/SKILL.md` + grep 内容 | ❌ 验证 OpenCode 加载链是另一回事 |
+| "现在代码状态" | ✅ git show + read_file | ❌ |
+| "派 OpenCode 读 X 仓文件" | ❌ | ✅ |
+| "review 我刚派的任务" | ❌ | ✅ |
+
+**记忆点**:兄弟说"读资料" = hermes 自身工具(`read_file`/`search_files`/`terminal` 跑 git/sqlite/findstr)。兄弟说"运行 X" / "派 X" = OpenCode 派工。**别把 hermes 读资料能力包装成派 OpenCode 任务**。
