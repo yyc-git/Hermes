@@ -44,23 +44,21 @@ gts-skill-update-discipline:纪律8=不塞选项menu / 纪律9=sqlite3路径C:\s
 §
 兄弟记忆压缩偏好(2026-08-19):memory.md只留最高优先级规则原文+索引,踩坑/具体案例/详细说明放MEMORY_ARCHIVE.md。详细内容→ARCHIVE+skill指针,不堆主表。
 §
-wt1/wt2/wt3-prop-fix 都是 GTS-Play 的 git worktree,node_modules 通过 junction 共享 `D:\Github\GTS-Play\node_modules` —— 修复一边等于修复两边。Yarn Cache 损坏根治:`cmd /c rd /s /q` 删 `$env:LOCALAPPDATA\Yarn\Cache\v6` 比 `yarn cache clean` 快100倍,Yarn 1 缓存6800+目录可占数 GB,C盘<5GB时易 corruption(C盘2.58→17.67GB 清后立竿见影)。Hermes 会话记录在 `hermes-home/sessions/request_dump_*.json`(429限流快照,非完整对话),OpenCode 会话在 opencode.db session/part 表,两者不要混读。PMXReduceFace 是独立 git 仓在 `D:\Github\PMXReduceFace`,通过 `file:../../../PMXReduceFace` 被 GTS-Play mmd_tool 引用。
-§
-Hermes Home 仓库(git@github.com:yyc-git/Hermes.git)已初始化并push(2026-08-19)。gts-submit-save + gts-save-memory 已改为双仓库提交：GTS-Play + Hermes Home。GitHub Push Protection 会扫描 skill 文件中的密钥(AKID/ark-xxx)，首次 commit 前必须脱敏。详见 hermes-home-state-management skill。
+wt1/wt2/wt3 + Yarn Cache + PMXReduceFace + Hermes Home 双仓提交 + request_dump 路径 → ARCHIVE「wt1/wt2/wt3 工作流」「Hermes Home 仓库」章节（2026-08-19）
 §
 🔴 webpack `export { x } from "y"` 仍生成 `let x = module.x` 立即赋值，**不能消除循环 TDZ**。修循环依赖必须在定义方改 `export function`（方案 B），不能在 re-export 层用 `export { } from`（方案 A 不可靠）。
 §
-hermes-session-read skill 已升级:主力数据源=state.db(sessions+messages表,C:\sqlite\sqlite3.exe查询),dump文件仅429限流时才有。给会话ID查会话→先sqlite3 state.db,找不到才查dump。skill已patch。(2026-08-19)
+hermes-session-read skill 升级（state.db 主力，dump 仅 429 fallback）→ ARCHIVE「读 Hermes 历史会话」章节（2026-08-19，已 patch）
 §
-React useEffect cleanup 时序坑(2026-08-19 prop fix):用 ref 标记「正在切换内容」防 onClose 误触发→失效,因为 cleanup 先执行 close()时 ref 还是 false。正解:antd-mobile Modal.show()返回handler支持replace()更新内容不触发onClose,两个effect分离:一个管开关([isShowProp]),一个管内容([currentPropItem])用handler.replace()。
+React useEffect cleanup 时序坑（antd-mobile Modal.replace()）→ ARCHIVE「React useEffect cleanup 时序坑」（2026-08-19 prop fix）
 §
-🔴 webpack dev-server 路径陷阱(2026-08-19 实锤):wt3 worktree `node_modules` 是 junction→GTS-Play,`resolve.symlinks:true`+`resolve.modules:['node_modules']` 导致源文件解析回主仓(即使 cd 到 wt 目录启 dev-server,source map 全解析到 ../../../GTS-Play/...);改 worktree 源码不 merge → dev-server 看不到改动;bundle 搜旧代码确认。**worktree 改了 ≠ dev-server 能看到,必须先 merge 回 dev 再从主仓测**。
+webpack dev-server 路径陷阱（worktree junction 解析回主仓）→ ARCHIVE「webpack dev-server 路径陷阱」（2026-08-19 实锤）+ gts-worktree-junction skill
 §
-Brief 防卡死:涉及 PMX 减面/verify 等计算密集操作的测试,jest 可能 >300s 超时卡死 agent bash 工具。brief 必须显式写「禁止跑 jest/BDD 测试,只改代码」或「只跑单个 --testNamePattern」。验证用 reduce.mjs + verify.mjs 手动执行
+Brief 防卡死：PMX jest >300s 超时 → ARCHIVE「Brief 防卡死」（2026-08-19）
 §
-🔴 回忆/git状态类问题信源优先级(2026-08-20 兄弟拍板):git log/git worktree list/ls = 唯一权威 > daily log / state.db > MEMORY 主表。主表是沉淀不是 git-tracked,容易和代码现状脱节(已踩:8-19 沉淀 Modal 修复清单,8-20 顺手答你时把已修的"待修"清单又吐出来;8-20 又踩"worktree 是否已 merge"凭记忆答错)。问"是否 merge/commit/部署/删除"类问题必须先实测,不准凭记忆。git ≠ 主表 → 以 git 为准,立刻 patch 主表。
+🔴 回忆/git 状态类问题信源优先级(2026-08-20 兄弟拍板):git log/git worktree list/ls = 唯一权威 > daily log / state.db > MEMORY 主表。主表是沉淀不是 git-tracked,容易和代码现状脱节(已踩:8-19 沉淀 Modal 修复清单,8-20 顺手答你时把已修的"待修"清单又吐出来;8-20 又踩"worktree 是否已 merge"凭记忆答错)。问"是否 merge/commit/部署/删除"类问题必须先实测,不准凭记忆。git ≠ 主表 → 以 git 为准,立刻 patch 主表。
 §
-antd-mobile Modal 白屏修复(commit **d6681051e** 2026-08-19):单机版✅ 全完成。City.tsx(setting+prop modal 改 Modal.show+replace)、Upgrade.tsx(Mask改useEffect+条件渲染,263行)、MissionComplete.tsx(Modal.show)。根因:stopLoop vs Three.js requestAnimationFrame 竞态。prop button 切换内容用 handler.replace() 不触发 onClose;使用道具后刷新 effect 依赖加 refresh state `_`。多人版 MultiplayerHall.tsx:806 gameOverVisible 仍 JSX 模式未改,不在本次修复范围。
+antd-mobile Modal 白屏修复(commit **d6681051e** 2026-08-19) → ARCHIVE 章节（City/Upgrade/MissionComplete.tsx 已修；多人版 MultiplayerHall.tsx:806 gameOverVisible 仍 JSX 模式未改）
 §
 🔴 hermes 读资料 vs OpenCode 加载链(2026-08-20 实锤):兄弟问"回忆 X / v3 skill 在不在 / 昨天 commit" → **hermes 自身 read_file 0 配置直读**(~/.hermes/skills/gts-memory-search-v3/SKILL.md 即时生效)。**绝不要派 OpenCode agent 验证 v3 skill 是否在 OpenCode surge prompt** — 那是 OpenCode 加载链问题(`.opencode/opencode.json` 的 `agent.build.permission.skill` allowlist),跟 hermes 读资料能力无关。判错题 = 浪费时间 + 兄弟拍桌。
 §
@@ -70,4 +68,4 @@ antd-mobile Modal 白屏修复(commit **d6681051e** 2026-08-19):单机版✅ 全
 §
 🔴 **worktree merge 后必须 `git worktree remove`(2026-08-20 兄弟拍板)**:fix/feat/refactor skill 漏的硬步骤。merge 完 dev 不算完,必须依次:① merge + push ② `git worktree remove <path>` ③ `git worktree prune` ④ `git worktree list` 二次确认 ⑤ issue 记 merge commit hash。详见 gts-dev-fix M-0 + gts-dev-feat Phase B + gts-dev-refactor Phase M + gts-auto Phase S。
 §
-🔴 兄弟说"demo"歧义(2026-08-20 实锤):**默认指 PMXReduceFace demo**,不是 GTS-Play frontend demo。PMXReduceFace 独立仓 `D:\Github\PMXReduceFace`,`yarn webpack:dev-server` 起在 **http://localhost:8096**(跟 frontend 7093 不冲突);LOD 对比页(LOD 100/70/55/50%),默认模型 `XiaoMeiOriginFix_02_elrein.pmx`(**不是 XiaHui**)。frontend demo 在 `packages/frontend`,端口 7093。启 PMXReduceFace demo 前 `netstat -ano | findstr :8096` 查占用防 EADDRINUSE。验证 CLI:`node src/tool/pmx-face-reduce/reduce.mjs --input X.pmx --output Y.pmx --target-ratio 0.5` + `verify.mjs X.pmx Y.pmx --target-ratio 0.5`。要测 XiaHui 走 PMXReduceFace demo,先看 demo/assets 里是否有 XiaHui PMX,没有要派 OpenCode 改 demo 源 + 加资源(源码改动 100%派)。
+🔴 兄弟说"demo"歧义(2026-08-20 实锤):**默认指 PMXReduceFace demo**,不是 GTS-Play frontend demo。`yarn webpack:dev-server` 起在 **http://localhost:8096**(frontend 7093),默认模型 `XiaoMeiOriginFix_02_elrein.pmx`(非 XiaHui)。完整 CLI + 端口检查 + 资源位置 → ARCHIVE「兄弟说 demo 歧义」(2026-08-20 实锤)。

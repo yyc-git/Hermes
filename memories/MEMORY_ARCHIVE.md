@@ -1,7 +1,7 @@
 # MEMORY_ARCHIVE — 从 memory.md 移出的详细规则/案例
 
-> 压缩日期：2026-08-19
-> 检索锚点：opencode dispatch 静默失败、yargs 拆参数、wait 脚本 patch、session 活跃判定、免费模型轮换、patch lie bug、编码哲学 8 条、GGUF 模型、Bun log 锁、PowerShell 测大小
+> 压缩日期：2026-08-19 + 2026-08-20(二次补章节)
+> 检索锚点：opencode dispatch 静默失败、yargs 拆参数、wait 脚本 patch、session 活跃判定、免费模型轮换、patch lie bug、编码哲学 8 条、GGUF 模型、Bun log 锁、PowerShell 测大小、Modal白屏、worktree dev-server 路径、argv 3 坑、wait-ms、hermes-读 vs OpenCode、回忆类信源
 
 ---
 
@@ -152,3 +152,67 @@ opencode 1.18.15 Bun 编译版，多进程并发写 log 时用非共享句柄，
 先查 state.db（主存储，C:\sqlite\sqlite3.exe "E:\...\state.db" "SELECT..."）→ dump 文件只是 429 fallback。兄弟硬偏好："你的会话啊"→ 必须主动查 DB 不等提醒。skill hermes-session-read 是系统内置（curator 拒编辑）。
 
 > 检索锚点：state.db、历史会话、hermes-session-read
+
+---
+
+## antd-mobile Modal 白屏修复（2026-08-19，commit d6681051e）
+
+单机版 ✅ 全完成。涉及 City.tsx（setting+prop modal 改 Modal.show+replace）、Upgrade.tsx（Mask 改 useEffect+条件渲染 263 行）、MissionComplete.tsx（Modal.show）。根因：stopLoop vs Three.js requestAnimationFrame 竞态。**prop button 切换内容用 handler.replace() 不触发 onClose**；使用道具后刷新 effect 依赖加 refresh state `_`。多人版 MultiplayerHall.tsx:806 gameOverVisible 仍 JSX 模式未改，不在本次修复范围。
+
+> 检索锚点：Modal白屏、Modal.show、handler.replace、stopLoop、requestAnimationFrame
+
+---
+
+## webpack dev-server 路径陷阱（2026-08-19 实锤）
+
+wt3 worktree `node_modules` 是 junction → GTS-Play，`resolve.symlinks:true` + `resolve.modules:['node_modules']` 导致源文件解析回主仓（即使 cd 到 wt 目录启 dev-server，source map 全解析到 ../../../GTS-Play/...）。改 worktree 源码不 merge → dev-server 看不到改动；bundle 搜旧代码确认。**worktree 改了 ≠ dev-server 能看到，必须先 merge 回 dev 再从主仓测**。详见 gts-worktree-junction skill。
+
+> 检索锚点：worktree dev-server、resolve.symlinks、junction、source map
+
+---
+
+## Brief 防卡死：PMX 减面/verify 等 jest 超时（2026-08-19）
+
+PMX 减面/verify 等计算密集操作的测试，jest 可能 >300s 超时卡死 agent bash 工具。brief 必须显式写「禁止跑 jest/BDD 测试，只改代码」或「只跑单个 --testNamePattern」。验证用 `reduce.mjs` + `verify.mjs` 手动执行（PMXReduceFace 独立仓 CLI）。
+
+> 检索锚点：brief防卡死、jest超时、reduce.mjs
+
+---
+
+## 回忆/git 状态类问题信源优先级（2026-08-20 兄弟拍板）
+
+git log / git worktree list / ls = 唯一权威 > daily log / state.db > MEMORY 主表。主表是沉淀不是 git-tracked，容易和代码现状脱节（已踩：8-19 沉淀 Modal 修复清单，8-20 顺手答你时把已修的"待修"清单又吐出来；8-20 又踩"worktree 是否已 merge"凭记忆答错）。问"是否 merge/commit/部署/删除"类问题必须先实测，不准凭记忆。git ≠ 主表 → 以 git 为准，立刻 patch 主表。
+
+> 检索锚点：信源优先级、git权威、主表脱节、实测原则
+
+---
+
+## hermes 读资料 vs OpenCode 加载链（2026-08-20 实锤）
+
+兄弟问"回忆 X / v3 skill 在不在 / 昨天 commit" → **hermes 自身 read_file 0 配置直读**（~/.hermes/skills/gts-memory-search-v3/SKILL.md 即时生效）。**绝不要派 OpenCode agent 验证 v3 skill 是否在 OpenCode surge prompt** — 那是 OpenCode 加载链问题（`.opencode/opencode.json` 的 `agent.build.permission.skill` allowlist），跟 hermes 读资料能力无关。判错题 = 浪费时间 + 兄弟拍桌。完整踩坑见 opencode-dispatch-pitfalls references/hermes-read-vs-opencode-dispatch.md。
+
+> 检索锚点：hermes直读、OpenCode加载链、allowlist、判错题
+
+---
+
+## worktree merge 后必须 git worktree remove（2026-08-20 兄弟拍板）
+
+fix/feat/refactor skill 漏的硬步骤。merge 完 dev 不算完，必须依次：① merge + push ② `git worktree remove <path>` ③ `git worktree prune` ④ `git worktree list` 二次确认 ⑤ issue 记 merge commit hash。详见 gts-dev-fix M-0 + gts-dev-feat Phase B + gts-dev-refactor Phase M + gts-auto Phase S + gts-worktree-junction scripts/worktree-cleanup.ps1。
+
+> 检索锚点：worktree清理、git worktree remove、merge后清理
+
+---
+
+## 兄弟说"demo"歧义（2026-08-20 实锤）
+
+**默认指 PMXReduceFace demo**，不是 GTS-Play frontend demo。PMXReduceFace 独立仓 `D:\Github\PMXReduceFace`，`yarn webpack:dev-server` 起在 **http://localhost:8096**（跟 frontend 7093 不冲突）；LOD 对比页（LOD 100/70/55/50%），默认模型 `XiaoMeiOriginFix_02_elrein.pmx`（**不是 XiaHui**）。frontend demo 在 `packages/frontend`，端口 7093。启 PMXReduceFace demo 前 `netstat -ano | findstr :8096` 查占用防 EADDRINUSE。验证 CLI：`node src/tool/pmx-face-reduce/reduce.mjs --input X.pmx --output Y.pmx --target-ratio 0.5` + `verify.mjs X.pmx Y.pmx --target-ratio 0.5`。要测 XiaHui 走 PMXReduceFace demo，先看 demo/assets 里是否有 XiaHui PMX，没有要派 OpenCode 改 demo 源 + 加资源（源码改动 100%派）。
+
+> 检索锚点：demo歧义、PMXReduceFace、8096、XiaoMeiOriginFix
+
+---
+
+## React useEffect cleanup 时序坑（2026-08-19 prop fix）
+
+用 ref 标记「正在切换内容」防 onClose 误触发 → 失效，因为 cleanup 先执行 close() 时 ref 还是 false。正解：antd-mobile Modal.show() 返回 handler 支持 replace() 更新内容不触发 onClose，两个 effect 分离：一个管开关（[isShowProp]），一个管内容（[currentPropItem]）用 handler.replace()。
+
+> 检索锚点：useEffect cleanup、Modal handler.replace、onClose误触发

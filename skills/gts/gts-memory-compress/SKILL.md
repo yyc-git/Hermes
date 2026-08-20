@@ -19,7 +19,8 @@ description: "兄弟说「压缩记忆」「压缩MEMORY.md」「记忆太大」
 ## 触发条件
 
 - MEMORY.md > 50 KB（健康线，2026-08-10 兄弟拍板：从 30 KB 改回 50 KB；命令：`[math]::Round((Get-Item ...MEMORY.md).Length/1KB, 1)`）
-- 兄弟说「压缩记忆 / 压缩MEMORY.md」
+- **MEMORY.md 字符 > 5600/8000 = 70%(2026-08-20 兄弟质问后收紧)**:bot 没主动压=撞墙必然,主表是字符硬上限(不是 KB);`memories/MEMORY.md` 才是 Hermes 注入的 MEMORY 真相
+- 兄弟说「压缩记忆 / 压缩MEMORY.md / MEMORY.md 满了」
 
 ## 步骤
 
