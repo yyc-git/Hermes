@@ -123,6 +123,72 @@ status: "BLOCKED (hardline): system shutdown/reboot.
 
 ---
 
+### 边界 7(2026-08-20):PowerShell 变量名含连字符 `-` 被解析为减法操作符
+
+**症状**:
+```powershell
+$results["new_section_in_2026-08-20"] = $content.Contains("2026-08-20")
+# At line:N char:M
+# Missing ')' in method call.
+# Unexpected token 'new_section_in_2026-08-20" = $content.Contains(..." in expression or statement.
+```
+
+**根因**: PowerShell parser 把 `$results["key-with-hyphens"]` 的 key 解析时遇到 `-` 当成减法操作符,后续 token 全乱。**变量名 + dict key 名都不能含 `-`**。
+
+**绕开**:
+- 变量/dict key 用下划线或 PascalCase：`$section_aug20` 或 `$sectionAug20`
+- 用 `${var}` 边界语法强制识别：`${results["new_section_in_2026-08-20"]}`（实测仍偶发解析错）
+- **最稳**：key 用纯 ASCII + 数字下划线，**完全避开连字符**
+
+### 边界 8(2026-08-20):PowerShell string literal 里含中文 UTF-8 = parser 报"乱码 token"
+
+**症状**:
+```powershell
+$results["等兄弟拍板"] = $content.Contains("等兄弟拍板")
+# Unexpected token '绛夊厔寮熸媿鏉?) in expression or statement.
+# (中文显示为乱码，被 parser 当成未知 token)
+```
+
+**根因**: PowerShell 5.1/7 在某些 encoding 配置下，源文件里的中文字符被错误码识别为 ANSI，**写入 .ps1 文件再读回就乱码**，parser 直接 fail。
+
+**绕开**:
+- **ad-hoc verification 脚本里避免直接写中文 literal**，用 ASCII 标记 + 单独 Write-Host 输出说明
+- 必须用中文时：用 `[System.Text.Encoding]::UTF8` 显式声明，或用 `here-string` `@"..."@` with `UTF8 BOM`
+- **更稳**：用 unicode escape：`$content.Contains("\x7b49\u5144\u5f1f\u62cd\u677f")` —— PS 直接识别 `\x` / `\u` 转义
+- **实在不行**：用 .NET StringComparison：`$content.IndexOf([string]"标记", [System.StringComparison]::Ordinal)`
+
+### 边界 9(2026-08-20):PowerShell Get-Process CommandLine 经常返回空
+
+**症状**:
+```powershell
+Get-Process -Name "node" | Where-Object { $_.CommandLine -match "wait-opencode-session.mjs.*ses_xxx" }
+# $_.CommandLine 为 $null / 空 → Where-Object 匹配失败 → 输出空集合
+```
+
+**根因**: PowerShell `Get-Process` 的 `CommandLine` 属性在 Windows 上**需要 admin 权限或不同 API**才能读全，普通用户进程经常返回 $null。
+
+**绕开**:
+- **用 WMI/CIM 拿 CommandLine**（实测可靠）：
+  ```powershell
+  Get-CimInstance Win32_Process -Filter "Name='node.exe'" | Where-Object { $_.CommandLine.Contains("ses_xxx") }
+  ```
+- WMI 输出含完整 CommandLine，admin 也可读普通用户进程
+
+### 边界 10(2026-08-20):Node v22+ 在 `npx jest` 大内存测试时偶发 native crash
+
+**症状**:
+```
+#  D:\nodejs\node.exe[16496]: std::shared_ptr<InitializationResultImpl> __cdecl node::InitializeOncePerProcessInternal...
+#  Assertion failed: ncrypto::CSPRNG(nullptr, 0)
+```
+
+**根因**: Node 22.x 在 crypto 模块初始化时偶发 native crash（可能跟 C 盘空间紧张 + Yarn Cache 空壳包残留导致 lib 加载问题有关——本会话 C 盘 < 5GB 触发）。
+
+**绕开**:
+- **不在 bot 主线直接跑 jest**（已有硬规则："源码改动 100% 必须 dispatch OpenCode"）
+- 真要跑 → dispatch verification-only session 走 OpenCode，让 OpenCode 子进程承受 native crash（不会污染 bot 主对话）
+- 备选：用 `yarn workspace` 走 yarn 通道而非 `npx` 直跑（不同进程初始化路径）
+
 ## 速查表(本轮 6 次撞的快速对照)
 
 | 错 误 | 边 界 | 修 法 |
@@ -133,6 +199,10 @@ status: "BLOCKED (hardline): system shutdown/reboot.
 | `sqlite3` 连环调报 locked (5) | 4 | 200ms 间隔 / `--retry` |
 | 复合命令 `cd X; cmd1; cmd2` 后段被吞 | 1 | 拆开,或用 `;` 改 `&&` |
 | `shutdown /f /t 60` 被护栏挡 exit -1 | 5 | **不能绕**,通知用户手动执行 |
+| dict key 含 `-` 报 "Missing ')'" | 7 | key 改 `_` 或 PascalCase |
+| string literal 含中文报 "乱码 token" | 8 | ASCII 标记 + `\u` 转义 或 CIM |
+| `Get-Process CommandLine` 返 $null | 9 | 用 `Get-CimInstance Win32_Process` |
+| Node v22+ npx jest 偶发 native crash | 10 | 不在 bot 主线跑,dispatch verification session |
 
 ---
 

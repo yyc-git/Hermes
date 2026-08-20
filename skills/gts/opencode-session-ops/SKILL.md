@@ -9,12 +9,13 @@ description: OpenCode session 监控判定与结果提取实战操作。wait 脚
 
 > 与 `opencode-schedule`（迁移自 OpenClaw 的受保护 skill）同域，本 skill 收录其未覆盖的**实测踩坑与 fallback**。调度协议本身以 opencode-schedule 为准，本 skill 只补操作细节。若 curator 合并，应并入 opencode-schedule 的 4️⃣ 监控步骤与结果提取部分。
 >
-**核心参考文件**(按需查阅):
-- `references/b2-algorithm-verification.md` — B2 算法验证反模式(单元测试改断言值匹配旧函数输出)
-- `references/model-resolution-pitfall.md` — **🔴 `-m` 模型名 silent fallback 陷阱(2026-08-18 兄弟质问 $0.40 浪费教训)**,dispatch 后必须 DB 查 session.model 字段验证
-- `references/model-cost-verification-sop.md` — **30 秒内 cost 验证 SOP(2026-08-18 Phase D r2 实测落地)**:三个数据源不可信(cost 是唯一真信号) + 完整 session-meta 落盘流程 + HTTP API 续跑姿势 + 当前推荐 model 矩阵
-- `references/opencode-api-endpoints.md` — **OpenCode 4098 HTTP API 端点速查(2026-08-19 实测)**:`/api/skill` 返回结构是 `{location, data: [...]}` 不是裸数组,`Where-Object` 必须先取 `.data`;`/session/{id}/message` endpoint 不带 `/api` 前缀
-- `references/server-dispatch-troubleshooting.md` — **4098 server 派工故障排查(2026-08-19 Phase Fix-r10 实测)**:`opencode.log` 文件锁导致 CLI dispatch 报 `FileSystem.open denied`(杀 serve 进程重启解决) + "session 创建但 agent 不启动"(part 表只有 brief 回显)与模型额度用尽的区分分诊表
+> **核心参考文件**(按需查阅):
+> - `references/b2-algorithm-verification.md` — B2 算法验证反模式(单元测试改断言值匹配旧函数输出)
+> - `references/model-resolution-pitfall.md` — **🔴 `-m` 模型名 silent fallback 陷阱(2026-08-18 兄弟质问 $0.40 浪费教训)**,dispatch 后必须 DB 查 session.model 字段验证
+> - `references/model-cost-verification-sop.md` — **30 秒内 cost 验证 SOP(2026-08-18 Phase D r2 实测落地)**:三个数据源不可信(cost 是唯一真信号) + 完整 session-meta 落盘流程 + HTTP API 续跑姿势 + 当前推荐 model 矩阵
+> - `references/opencode-api-endpoints.md` — **OpenCode 4098 HTTP API 端点速查(2026-08-19 实测)**:`/api/skill` 返回结构是 `{location, data: [...]}` 不是裸数组,`Where-Object` 必须先取 `.data`;`/session/{id}/message` endpoint 不带 `/api` 前缀
+> - `references/server-dispatch-troubleshooting.md` — **4098 server 派工故障排查(2026-08-19 Phase Fix-r10 实测)**:`opencode.log` 文件锁导致 CLI dispatch 报 `FileSystem.open denied`(杀 serve 进程重启解决) + "session 创建但 agent 不启动"(part 表只有 brief 回显)与模型额度用尽的区分分诊表
+> - `references/2026-08-20-dispatch-discipline-and-fixes.md` — **🔴 2026-08-20 兄弟拍板 5 条规约**:改动纪律(只有真不可逆操作要拍板)+ 派工后零通知 + 轮询频率 token 真相 + wait `stableMs` ≥ 5 分钟(实测教训)+ gts-dev-fix 全自动模式时序 + demo 歧义(PMXReduceFace vs GTS-Play frontend)+ 派工开场白禁止
 - `scripts/mmd-data-verify.mjs` — **MMDData.ts 强制最小验证集可执行版(2026-08-18)**:9 项 PASS/FAIL 检查一键跑,不依赖人工 grep
 
 ## 1️⃣ wait 脚本 exit 3（stuck）分类判定
@@ -1141,3 +1142,135 @@ brief 必填的"对外断言"声明:
 - [ ] 涉及报告/审核时 brief 包含 `## 🔬 实测前置项` 段落？
 
 **漏任何一条 → 不 dispatch,补 brief 后再派**。这条规则比"看 agent 报告"重要 10 倍——bot 在 dispatch 前挡住比 agent 跑完浪费 N 小时便宜太多。
+
+## 2️⃣4️⃣ server HTTP API timeout 是 server死锁的精确信号(2026-08-20 XiaHui 多 session 实测)
+
+> **场景**：4 个并行 OpenCode session (A/B/C/D) 全部 DB time_updated 同时定格 13-18 分钟前 + HTTP API 持续 timeout + netstat 上 4098 仍在 LISTENING + opencode.exe 进程还在跑 → 单独看任一信号都不能判 server 死。
+>
+> **兄弟拍板(2026-08-20)**:「不需要杀残留啊。你重启 server 后,继续向会话发继续的信息」——直接重启 server + 对每个 session 发「继续」即可,**session 残留不杀**(FK 约束自动阻止 server 端 agent 写回,server 重启后通过「继续」唤醒)。
+
+### server 死锁的 3 维判定(全部满足 = 死锁)
+
+1. **DB time_updated 多个 session 同时定格** ≥ 10 分钟(单 session 定格不算,可能是 agent 思考阶段)
+2. **HTTP API 持续 timeout**(`Invoke-WebRequest -TimeoutSec 5` 5 秒内不返回 200)——这是关键新信号,旧 skill 只查 netstat + 进程,不查 HTTP
+3. **netstat 显示 4098 仍在 LISTENING + opencode.exe 进程还在跑**——但 HTTP handler 已死锁(Bun runtime 卡住)
+
+**关键**:旧 skill §8️⃣ 只看 `netstat LISTENING + process 存在` 判 server 活,**漏了 HTTP API timeout 这一信号**(实测本次即漏掉)。**HTTP 5 秒 timeout 是 server 死锁的精确信号**,即使 netstat + 进程都健康。
+
+### `opencode serve` 重启精确命令(必须含 `--hostname`)
+
+```powershell
+# ❌ 错误:缺 --hostname → ServeError 退出
+opencode serve --port 4098
+
+# ✅ 正确:显式 --hostname 127.0.0.1
+opencode serve --hostname 127.0.0.1 --port 4098
+```
+
+- **必须 `--hostname 127.0.0.1`**(实测缺它 ServeError)
+- **必须 `--port 4098`**(默认 --port 0 = 随机,没法 attach)
+- 后台启动:`terminal(background=true, notify_on_complete=false)`(server 长生命周期,不需要 notify_on_complete)
+
+### 杀 server 进程 vs 杀 session 残留的边界
+
+| 杀什么 | 何时 | 工具 |
+|---|---|---|
+| **server 进程** | HTTP timeout + 多个 session DB 定格 | `Stop-Process -Id <serve_pid> -Force` → 立即 `opencode serve --hostname 127.0.0.1 --port 4098` |
+| **session 残留(DB 里 ses_xxx)** | **不要主动杀**(兄弟原话) | 用「继续」唤醒:`opencode run -s <sid> -m <原模型> --attach http://localhost:4098 --dir <项目> --no-replay "继续:<待办>"` |
+
+**兄弟拍板"不需要杀残留"含义**:重启 server 后不要顺手把所有 session 都 `opencode session delete` 删了。**应该尝试「继续」唤醒**(server 端 agent 在内存中仍存在,server 重启后通过「继续」消息恢复)。FK 约束自动阻止 server agent 写回已删 session(见 gts-opencode-stop §2️⃣),但**session 仍在 DB 留 = 还有救**。
+
+### 重启后对每个挂 session 发「继续」的精确命令
+
+按 monitoring-wait.md §"🔴🔴🔴 time_updated 停 1 分钟以上 → 发「继续」信息唤醒":
+
+```powershell
+# 对 session A v2 (原模型 volcark/deepseek-v4-flash-ga-260731)
+opencode run -s <sid> -m volcark/deepseek-v4-flash-ga-260731 --attach http://localhost:4098 --dir D:\Github\GTS-Play --no-replay "继续:你之前被 OpenCode server 卡死导致挂起,server 已重启,请继续完成 <任务摘要>。如已实现完成,跑全量 jest 验证无新失败。"
+
+# 4 个必带参数(兄弟硬偏好):
+#   -s <sid>              同 session 续跑(不是新建)
+#   -m <原模型>           必须与原 dispatch 一致(2026-08-19 兄弟纠正:不要换模型)
+#   --attach 4098          挂到新 server
+#   --no-replay            干净上下文(不重新加载之前所有消息)
+```
+
+每个「继续」dispatch 用 `terminal(background=true, notify_on_complete=true)` 启动(不阻塞 turn,完成通知到达)。
+
+### 重启后批量恢复 wait
+
+新 wait 必须用**毫秒值**(§2️⃣0️⃣ 教训):
+
+```powershell
+node scripts/wait-opencode-session.mjs <sid> 7200000 600000 --exit-on-stuck --title "<任务名>"
+# 7200000ms = 2h maxWait / 600000ms = 10min stable(不是 7200/600)
+```
+
+### server 重启后 4 件必验证
+
+1. ✅ `opencode serve` 进程真的 LISTENING 4098(`netstat -an | Select-String ":4098.*LISTENING"`)
+2. ✅ HTTP API 返回 200(`Invoke-WebRequest /api/session -TimeoutSec 5`)
+3. ✅ 每个挂 session 都收到「继续」消息(DB time_updated 在涨)
+4. ✅ 每个新 wait 用正确毫秒值启动(不会 30s TIMEOUT)
+
+**任一 FAIL → 不要"看上去恢复了"就跑下一阶段**,每件验证 PASS 才进。
+
+### 实测记忆点
+
+- 本次(2026-08-20)XiaHui fix 4 个 session:3 个用火山 flash 兜底,1 个用 flash-free 全挂在 OpenCode server 死锁时
+- 第一次 `opencode serve --port 4098`(缺 `--hostname`)→ 进程跑起来后立刻 `ServeError` 退出
+- 兄弟指出"加 --hostname" → 第二次 `opencode serve --hostname 127.0.0.1 --port 4098` → `opencode server listening on http://127.0.0.1:4098` 成功
+- 重启后 3 个 session 全部 `time_updated` 复活到 03:31:37/39/40(server 端 agent 内存还在,「继续」送达成功)
+
+### 关联
+
+- opencode-llm-failure-recovery §"OpenCode server kill 后不会自动启动"——agent 自己拉起 server 的可行方法,本节是其精确命令的实测补充
+- §2️⃣0️⃣ wait 参数毫秒单位——server 重启后恢复 wait 时必用毫秒值
+- monitoring-wait.md §"🔴🔴🔴 time_updated 停 1 分钟以上 → 发「继续」信息唤醒"——「继续」消息的精确命令模板
+
+## 2️⃣5️⃣ DB time_updated 是 session 活跃唯一 ground truth(2026-08-20 实锤+ 兄弟纠正)
+
+> **兄弟原话(2026-08-20):「A v2 在跑啊!」**——我误把 volcark flash session 当"静默挂"并加入 blacklist,被兄弟纠正。**DB `time_updated` 是判定 session 活跃的唯一 ground truth,不看 tokens last / finish 字段**。
+
+###判定口诀
+
+```
+session.time_updated > (now - 600000)   → 活跃,不管 tokens/finish 长什么样
+session.time_updated < (now - 1800000)  → 死/挂,可走 gts-opencode-stop
+last_message.tokens.total = 0            → 仅"该消息空输出",不等于 session 死
+last_message.finish = "tool-calls"      → agent 刚调完工具、还在循环处理,**活跃**
+last_message.finish = "stop"            → 真完成
+last_message.finish = "unknown"         → LLM 失败(按 llm-failure-recovery 分类)
+```
+
+###误判反例(2026-08-20 bot 真实犯错)
+
+我看到 A v2 `last_message.tokens.total=*** + finish不存在` → 误判"静默挂" → 错误:
+- 把 volcark flash 加入 blacklist(兄弟原话:"volcark flash 现在可以用啊!")
+- 删 A v1 重派 A v2(浪费 1 session + 1 dispatch)
+- 实际:A v2 `tokens=173K + reasoning=11K + finish=tool-calls` = **正常 LLM 输出 tool-call 状态**(agent 在跑)
+- DB `time_updated` 03:15:07 时还有变化(只是当时定格,后来又跑了)
+
+###wait 脚本退出 ≠ = session 死
+
+- wait 脚本因 `idle ≥ stableMs`(默认 300000ms)退出 → session 完全可能还在跑(agent 思考阶段正常静默)
+- wait 退出后**必须**查 DB `time_updated`:在涨 → 重新起 wait(`stableMs` 调大);不在涨 → 发「继续」或按 llm-failure-recovery 分类
+- **`time_updated` 停 ≠ 卡死**:agent 思考阶段(模型生成)time_updated 不更新,这是正常状态
+
+###实测验证口诀的优先级
+
+判定 session 真实状态,**只看 DB**:
+```powershell
+& "C:\sqlite\sqlite3.exe" "$env:USERPROFILE\.local\share\opencode\opencode.db" "SELECT datetime(time_updated/1000,'unixepoch','localtime') FROM session WHERE id='<sid>'"
+# 看到时间在最近 10 分钟内 → 活跃,什么都不做
+# 看到时间 > 30 分钟前 → 真挂,走 gts-opencode-stop 或发「继续」
+```
+
+**禁止**用 `last message.tokens.total=***` 判挂掉 —— 那是被截断的中间输出,不是状态信号。
+**禁止**用 `last message.finish=unknown` + `tokens=0` 单点判挂 —— `unknown` 出现是 token 截断或思考中间态,需配合 idle 时长判定。
+
+###关联
+
+- opencode-llm-failure-recovery §"DB time_updated 是 session 活跃唯一 ground truth"——本节是同规则的不同视角,重点强调"wait exit 不等于 session 死"
+- monitoring-wait.md §"🔴🔴🔴 wait exit ≠ session 卡死"——同一规则的 wait 视角
+- §1️⃣9️⃣ Agent 不一定产生 step-finish stop——本节是该规则的延伸(time_updated 停可能是 agent 在"写报告"而非"卡死")

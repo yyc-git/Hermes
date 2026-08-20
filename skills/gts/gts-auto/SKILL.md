@@ -176,6 +176,16 @@ msg * "兄弟，[skill 名称] 全自动完成！
 
 > 全流程结束、issue 标记 completed 之后、发出完成通知之前，**必须把 Phase R 反思报告里的可执行教训落到对应 skill**。这是全自动模式的标准关闭动作。
 
+**🔴🔴 R/S 阶段由 bot 做，禁止派 OpenCode（2026-08-20 兄弟拍板）**
+
+> **R（反思）和 S（保存）必须由 bot 主线执行，不能 dispatch OpenCode。** 原因：R 反思需要访问 bot 记忆主表（MEMORY.md / ARCHIVE.md），只有 bot 能做；OpenCode 不可见 bot 记忆，派它写反思会丢失教训关联，导致下次同类问题重演。
+>
+> - **R（反思）**：bot 读 phase-c-verification.md + issue pitfalls + daily log → 整合记忆主表 → patch skill / update memory → 反思报告
+> - **S（保存）**：bot 做记忆/skill 落地（核心）；commit/push 是机械动作，可派 OpenCode 但非必须
+> - **全自动模式下 R + S 都由 bot 做**（记忆/skill 落地必须 bot；commit/push 可选派 OpenCode）
+> - **OpenCode 在 R/S 阶段可做**：写反思 .md 草稿到 `.tmp/` + git commit docs/ 目录
+> - **OpenCode 在 R/S 阶段禁做**：落地 skill patch、更新 memory、整合当日教训
+
 **规则：**
 1. **反思报告里"该 patch 到 skill X"的条目** → 直接 patch skill 文件（用 `patch` 工具）：
    - 加进对应 skill 的 pitfall / 纪律段
@@ -233,11 +243,12 @@ loop:
      - 否则 → 执行 nextStep
 
   3. 执行 nextStep（根据步骤名调用对应逻辑）：
-     - 调度 OpenCode（如需要）→ 持续监控（§3 自动修复规则）
-     - 编译检查
-     - BDD/单元测试
-     - E2E 测试
-     - 代码审核
+       - 调度 OpenCode（如需要）→ 持续监控（§3 自动修复规则）
+       - 编译检查
+       - BDD/单元测试
+       - E2E 测试
+       - 代码审核
+       - 🔴🔴 **R/S 步骤必须 bot 主线执行，禁止派 OpenCode（2026-08-20 兄弟拍板）**：R 反思需访问 bot 记忆主表，OpenCode 不可见；bot 读 phase-c-verification + 整合记忆主表 + patch skill/update memory + 写反思报告。S（保存）由 bot 做或派 OpenCode 仅做 commit/push（机械动作，无记忆依赖）
      - 🔴🔴 **worktree cleanup 子步**（2026-08-20 兄弟拍板）：如果当前步骤是 `B` / `C1` / `C2` / `M` 任一完成且本次任务在 worktree 中实现 → 在 step-done 之前自动跑：
        ```powershell
        # §merge-verify（worktree-junction）：remove 前必跑，不通过 abort
@@ -278,6 +289,21 @@ loop:
 | 步进循环中 >5 分钟无进度（completedCount 未变化） | ⚠️ 检查 wait 脚本/DB 状态 → 如果 OpenCode 在跑则继续等 → 否则按 §4 🔴 停止触发通知 |
 | 所有 remainingSteps 执行完毕但 issue 非 completed | ⚠️ 异常：调 OpenCode Pro 分析原因 → 通知兄弟 |
 | **卡在 merge / dispatch / 等兄弟介入**（如 dev 工作区冲突、OpenCode server 死、session 真挂需要兄弟手动操作） | 🔴🔴🔴 **立即用 `notify.ps1` 桌面通知兄弟**(2026-08-18 XiaHui fix 教训:Phase S 卡在 merge 时未通知,兄弟没看到卡点,绕了一圈才推进) → 通知内容含:卡在哪个步骤、阻塞原因、需要的介入动作 |
+
+### 🔴🔴🔴 "等兄弟拍板"通知硬规(2026-08-20 兄弟拍桌教训)
+
+> **兄弟原话(2026-08-20)**:「需要我拍板为什么不发msg通知啊？？？？？」——C 任务 agent 已完成 34/34 通过、tsc 零错误、未 commit,但我**只在对话里写了"等你拍板"**,**没有发 notify.ps1**,兄弟没看到卡点 → 绕了 2 轮才发现。
+
+**铁律**:全自动模式 ≠ "少打扰兄弟"。**任何触达"等兄弟拍板"的节点**(commit 决策、merge 决策、session 重派决策、改 .gitignore/接 git 等不可逆操作),**第一时间用 notify.ps1 桌面弹窗通知**,不许只在对话里等。
+
+| 节点 | 必须立刻 notify | 通知内容 |
+|---|---|---|
+| 任何 agent 自报"完成"且涉及 git 操作(commit/merge/push/rebase) | ✅ | 完成清单 + 待 commit 文件清单 + 等兄弟拍 commit |
+| 任何 session 静默挂掉(stop=unknown + tokens=0) | ✅ | sessionId + 触发条件 + 是否重派 |
+| 任何改动 .gitignore / 不可逆文件 | ✅ | 改动计划 + 等兄弟确认 |
+| 任何多 session 派工后需兄弟选 worktree / 模型 | ✅ | 选项 + 默认值 + 等兄弟拍板 |
+| M 阶段(手动测试)准备好待兄弟操作 | ✅ | 测试命令 + 序号提示模板 |
+| **任何其他"等你"状态** | ✅ | 一律先 notify,不允许只发对话 |
 
 ### 7.4.1 🔴🔴 对外断言前必须实测(2026-08-18 XiaHui C-r2 教训)
 

@@ -63,6 +63,14 @@ Write-Host "=== 2️⃣ OpenCode Server session check ==="
 
 ---
 
+## ~~Step 0.3 — 模型可用性预检~~ (已废弃 2026-08-20)
+
+> **兄弟拍板：不需要模型预检。** 直接 dispatch，派完后监控是否出现 rate limit/额度耗尽，命中则 blacklist + 自动轮换。
+>
+> 模型故障检测改为 **post-dispatch 监控**：wait 脚本退出后查 part 表 data 是否含额度耗尽关键词（`Free usage exceeded` / `exceeded the 5-hour usage quota`），命中则 `dead <model>` + 切下一个 + 重派。详见主 skill「模型故障轮换」节。
+
+---
+
 ## Step 0.5 — 根目录 brief 唯一性预检(2026-08-08 新增,多任务并行跑偏教训)
 
 > **dispatch 前必须确认目标 brief 文件是唯一且内容正确的**。多任务并行时根目录会堆多个 `.opencode-brief*.md`(实测达 17 个),`opencode run $brief` 传参在 attach 模式下可能 fallback 读根目录通用 `.opencode-brief.md`,导致 agent 跑偏去改其他任务的 brief/文件。

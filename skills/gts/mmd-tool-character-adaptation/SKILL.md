@@ -296,6 +296,56 @@ import('pmx-physics-reduce/pmx-loader.mjs').then(({parser}) => {
 - `gts-auto` §7.4.1(对外断言必须实测): 本坑"§5 算法误伤 jacket1"假说两次都没实测就被采用,实测只需 1 行 node 命令
 - `gts-dispatch-preflight` 「跨仓派工」节: PMXReduceFace 是独立 git 仓(`D:\Github\PMXReduceFace`,不在 wt1 worktree),派工时 brief 显式禁止跨仓读,见该 skill 末尾的反面教材
 
+### 🔴 上游 PMXReduceFace 已落地 vs GTS-Play 未跟(2026-08-20 兄弟拍板 + 实测确认)
+
+**关键事实(2026-08-20 兄弟反馈 + 实测确认)**:
+- 兄弟原话:「PMXReduceFace 现在有 --skip-threshold 参数了,默认将其设为 5 万面」
+- 实测 `D:\Github\PMXReduceFace\src\tool\pmx-face-reduce\reduce.mjs`:
+  - 上游已有 commit `0b50ce0 feat(pmx-reduce-face): 减面阈值改 5 万面,5 万以下直接跳过 QEM` + `730e9a1 feat(demo): add model switching (XiaoMei / Xiaye1 / XiaHui) + --skip-threshold for small models`
+  - `skipThreshold = 50000` 默认值(行 64)
+  - 跳过判定(行 96): `if (totalTri <= targetTri && totalTri <= skipThreshold) { ... return copy input }`
+  - CLI arg `--skip-threshold`(行 35),不传 = 用默认 50000
+- **但 GTS-Play 的 `packages/mmd_tool` 调上游 PMXReduceFace 的代码 ≠ 直接透传** —— `packages/mmd_tool/src/tool/pmx-optimize/optimize.mjs:90-98` 调 `reduceFaces(... lockSmallMaterials: true ...)`,**没显式传 `skipThreshold`**,理论上吃上游默认值 50000,但是否真生效需实测(reduceFaces 的 lockSmallMaterials + skipThreshold 优先级未验证)
+
+**🔴 兄弟 2026-08-20 实测发现的 4 个数据 bug(派工 brief 必填)**:
+1. **XiaHui PMX 总面 ~35282 < 50000 但仍跑了减面**(jacket1 6796→6752 减 44 面,见坑 7 实测数据) → 上游默认 skipThreshold=50000 已落地,但 GTS-Play 调上游时是否真触发 skip 路径 = 待查
+2. **getClothCollisionData / getClothHpData 给 XiaHui 写了 shoeDamagePart**:XiaHui 无 `右つま先ＩＫ`/`左つま先ＩＫ`(TDA 式宴模型简化骨骼时删了),但 `gen-cloth-data.mjs` 没识别 → `5c9aef88b` 加了 hasToeIKBones 判定,但 XiaHui 实际是否触发了 skip 分支 = 待查(可能是 mmd_tool 上次跑时还没这 commit,或 commit 已落地但参数路径没走通)
+3. **getFirstPersonControlsData 调了 `getCameraPositionForFirstPersonControlsFunc`**:XiaHui 无 `メガネ` 骨骼,但函数被调用 → `be243ac71` 参数化了该函数,但无メガネ 分支是否真触发 fallback = 待查
+4. **getPickedTransform 断言值错**:Xiaye1/XiaHui 正确值 `[-0.5, -0.6, 0]`,但 `c8f92b5dc` 改了算法却没同步改 BDD 断言 → 测试断言应改为 `toEqual([-0.5, -0.6, 0])` 或 `toBeCloseTo([-0.5, -0.6, 0], 2)`
+
+**派工 brief 必填的「上游联动性」前置实测**(本会话确认 GTS-Play 与 PMXReduceFace 上游的同步状态):
+
+```powershell
+# 1. 上游 PMXReduceFace 当前 skipThreshold 默认值
+grep -n "skipThreshold = " D:\Github\PMXReduceFace\src\tool\pmx-face-reduce\reduce.mjs | head -3
+# 期望: skipThreshold = 50000
+
+# 2. GTS-Play mmd_tool 调上游的方式(packages/mmd_tool/src/tool/pmx-optimize/optimize.mjs)
+Select-String -Path "D:\Github\GTS-Play\packages\mmd_tool\src\tool\pmx-optimize\optimize.mjs" `
+  -Pattern "reduceFaces|skipThreshold|lockSmallMaterials"
+# 期望:看到 reduceFaces 调用 + 是否显式传 skipThreshold
+
+# 3. node_modules 里 PMXReduceFace 的版本是否跟上游
+ls "D:\Github\GTS-Play\node_modules\pmx-reduce-face\src\tool\pmx-face-reduce\reduce.mjs"
+diff "D:\Github\GTS-Play\node_modules\pmx-reduce-face\src\tool\pmx-face-reduce\reduce.mjs" `
+     "D:\Github\PMXReduceFace\src\tool\pmx-face-reduce\reduce.mjs"
+# 期望: diff = 空(已同步) 或 diff 列出差异(未同步 → 必须先把上游 commit cherry-pick / cp 进 node_modules)
+```
+
+**🔴 兄弟拍板的修复方向(2026-08-20 实测定稿)**:
+1. **PMXReduceFace `--skip-threshold=50000`**:确认 GTS-Play 调上游时确实传了 skipThreshold=50000(或吃上游默认),且对 < 50000 面的 PMX 真触发 skip(不减面)
+2. **getCameraPositionForFirstPersonControlsFunc 无メガネ骨骼分支**:改为根据当前骨骼(头部 + 眼睛相关骨骼)动态判断,通用算法(不特判角色)
+3. **getPickedTransform 断言改 `[-0.5, -0.6, 0]`**:BDD 测试断言从原 `[-0.504, -0.492, 0.064]` 改成 `toBeCloseTo([-0.5, -0.6, 0], 2)`,仅适用于 XiaHui/Xiaye1(其它模型可能相近但正确值不同,新角色接入时各自推导)
+4. **getClothCollisionData / getClothHpData 无 toe IK 跳过鞋子数据**:沿用 `5c9aef88b` 的 hasToeIKBones 判定,XiaHui 不写 shoeDamagePart
+
+**修复后验收**(本会话目标):
+- XiaHui PMX 减面前后 jacket1 face 数 byte 级一致(6796 → 6796)
+- XiaHui MMDData 中无 `shoeDamagePart` 字段(无 toe IK 骨骼)
+- XiaHui MMDData 中 first-person-camera 字段存在且合理(无メガネ 时用眼睛相关骨骼 fallback)
+- mmd-config BDD picked 测试断言 = `[-0.5, -0.6, 0]` ± 0.01
+
+**🔴 跨仓派工提醒**:PMXReduceFace 是独立 git 仓(`D:\Github\PMXReduceFace`),不在 GTS-Play worktree 内。修复上游参数传递时 brief 必须显式声明 workdir 边界 + 禁止跨仓读(详见 `gts-dispatch-preflight` §「跨 git 仓派工」)。
+
 ### 🔴 兄弟亲自 grep 才能挖出的盲区(2026-08-18 实测,Phase R 反思未覆盖)
 
 **关键事实**:本 skill 第「验证 5 的真实盲区」节是 Phase C-r2 报告触发的(agent 自报 §11.2 全过但 §1 双函数 / §5 damageParts 漏了);Phase R 反思 patch 落地后,**兄弟本人亲自 grep `mods/mmd-character-extend/src/json/MMDData.ts` 仍然挖出了两个 agent + bot 都没看到的盲区**:
@@ -391,6 +441,34 @@ Select-String -Path "mods/mmd-character-extend/src/json/MMDData.ts" `
 - **幂等守卫角色化** → first-person-hide `2.2/2.5`：多角色文件下非 `--force` 写回不再误判 already generated
 
 全量验证命令：`node ../../node_modules/jest/bin/jest.js --config jest.config.js --testPathPattern 'cloth|mmd-config|first-person-hide'`（mmd_tool 包目录跑，根目录 npx jest 会解析错 config 路径）
+
+### 🔴 坑 8：jest-cucumber BDD feature/step 文本同步（2026-08-20 实测）
+
+**feature 文件步骤文本必须与 steps.ts 的 `defineStep` 文本完全一致**（jest-cucumber 严格匹配）。改了 `.steps.ts` 的 `then('...')` / `and('...')` 描述文字但没同步改 `.feature` 文件 → **`Test suite failed to run`**（不是测试失败，是根本跑不起来，报 `Expected step #N to match "..."`）。
+
+**修 BDD 断言的标准三步**：
+1. 改 `.steps.ts` 的 `expect()` 断言值
+2. 同步改 `.steps.ts` 的步骤描述文字
+3. **同步改 `.feature` 文件对应的步骤行文本**
+
+三个文件必须文字一致，缺一个都炸。
+
+**实例（2026-08-20 pre-existing fix）**：XH-06b/06c 断言 `hp=fullHp*0.2` 改为 `hp=fullHp*0.3`，同时改了 `.steps.ts` 三处 + `.feature` 两处才跑通。
+
+### 🔴 坑 9：mmd_tool 全量 jest 超时 — 用针对性测试（2026-08-20 实测）
+
+mmd_tool 全量 `npx jest` 经常超时（>5 分钟甚至 10 分钟）。用 `--testPathPattern` + `--forceExit` 跑针对性测试：
+
+```powershell
+# 单任务
+npx jest --config jest.config.js --no-cache --testPathPattern="cloth-xiahui" --forceExit
+# 组合多个（管道符分隔）
+npx jest --config jest.config.js --no-cache --testPathPattern="cloth-xiahui|mmd-config|skip-threshold" --forceExit
+# 过滤输出
+npx jest ... 2>&1 | Select-String -Pattern "PASS|FAIL|Tests:|Test Suites:"
+```
+
+**`--forceExit` 必须带**（mmd_tool 有未关闭的 async handle，不带会挂起）。过滤输出用 `Select-String`，不用 `grep`。
 
 ## 通用纪律
 

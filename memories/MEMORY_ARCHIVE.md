@@ -61,7 +61,7 @@ config default 只是兜底。UI 模型选择器选过的模型存 desktop-ui.sq
 
 ## opencode 模型落盘+免费组（2026-08-18）
 
-scripts/opencode-session-meta.mjs save/get/ls 写 .opencode-session-meta/<sid>.json（provider/model/variant），发「继续」前 get 拼 -m。scripts/opencode-free-model-state.mjs get/dead/revive/set（current+blacklist 带 deadAt），调度免费时段先 get 拿 current，确认挂（3次继续+明确报错）才 dead 推进，静默 unknown 不算挂（删会话重开）。黑名单 24h 自动过期。免费组顺序 flash-free→hy3-free→mimo→nemotron-3-ultra→nemotron-3.5-lightning→laguna-s-2.1→火山→go。
+scripts/opencode-session-meta.mjs save/get/ls 写 .opencode-session-meta/<sid>.json（provider/model/variant），发「继续」前 get 拼 -m。scripts/opencode-free-model-state.mjs get/dead/revive/set（current+blacklist 带 deadAt），调度免费时段先 get 拿 current，确认挂（3次继续+明确报错）才 dead 推进，静默 unknown 不算挂（删会话重开）。黑名单 18h 自动过期(2026-08-20 兄弟改,原 24h)。免费组顺序 flash-free→hy3-free→mimo→nemotron-3-ultra→nemotron-3.5-lightning→laguna-s-2.1→火山→go。
 
 > 检索锚点：session-meta、free-model-state、免费组轮换
 

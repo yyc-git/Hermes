@@ -36,22 +36,29 @@ description: "OpenCode 派工防御加固:permission auto-reject 防卡死、Pro
 
 **反模式**:用 HTTP API `/session/{id}/message` 给卡死 session 发消息 → curl 超时,server 端不响应(本轮实测)
 
-### 铁律 3:Pro non-max 派工后 20 分钟主动轮询一次
+### 铁律 3:Pro non-max 派工后不主动轮询(2026-08-20 兄弟拍板修订)
 
 **触发条件**:派 Pro 模型(non-max)后
-**依据**:Pro max 静默 80 分钟正常,但 Pro non-max 静默 20+ 分钟 = 卡死信号
+**依据**:Pro max 静默 80 分钟正常,Pro non-max 静默 20+ 分钟 = 卡死信号。但 **wait 脚本自动跟踪 part 表 step-finish + DB time_updated**,通知到达会触发 bot 一次性处理。
 
-**轮询命令**(每 20 分钟):
+**修正做法**(2026-08-20 兄弟原话「间隔太久了!消耗token大吗?」+「不需要告诉我」):
+- ❌ 派 Pro 后每 20 分钟主动轮询 + 整轮回复(每轮 ~1000 token,跑 1h = 12,000 token 净烧)
+- ✅ 派 Pro 后**静默**,等 Hermes `notify_on_complete` 自动唤醒 → 一次性 `process(action=log, offset=-2)` 读最后输出 + 查 part 表判断 step-finish 状态
+- ✅ 通知丢失/不可靠时:`process(action=log, session_id=<wait_id>, limit=2)` 看 wait stdout(token = 0 工具调用,不等同 OpenClaw 老 poll 整轮回复烧 2 亿+),间隔 60s(全自动模式 120s)
+- ✅ 通知到达后查 part 表最近事件:`bash/read status=error` 出现 "The user rejected permission" 重复 2+ 次 = 卡死信号,见铁律 2
+
+**检测命令**(通知到达后一次性跑,**不是 20 分钟循环**):
 ```powershell
-$tu = & "C:\sqlite\sqlite3.exe" "C:\Users\Administrator\.local\share\opencode\opencode.db" "SELECT time_updated FROM session WHERE id='<sid>';" | ForEach-Object { ($_ -split '\|')[1] }
-$ageMin = [Math]::Floor(([DateTimeOffset]::Now.ToUnixTimeMilliseconds() - $tu) / 60000)
-# > 20 分钟 → 查 part 表最近事件判断
+& "C:\sqlite\sqlite3.exe" "C:\Users\Administrator\.local\share\opencode\opencode.db" "SELECT substr(CAST(data AS TEXT),1,300) FROM part WHERE session_id='<sid>' ORDER BY time_updated DESC LIMIT 5"
+# 看到 step-finish reason=stop + commit 出现 = 完成
+# 看到连续 2+ 条 perm-deny error = 卡死(铁律 2)
+# 看到 tool running 20min+ = 真卡
 ```
 
 **判断**:
-- 推进(step-finish / tool completed / text / reasoning)→ 继续等
+- step-finish stop + commit 出现 → 收产物汇报
 - 卡 perm-deny → 立刻停 + 重派
-- 卡空(无新事件)→ 30 分钟还不动 → 停 + 派 Pro 根因分析
+- 卡空(无新事件)→ 通知 60min 后还没恢复 → 重派 / 汇报兄弟
 
 ### 铁律 4:派工 brief 模板硬性增加"外部路径访问声明"段
 
@@ -169,7 +176,7 @@ opencode run "请列出你在当前 surge prompt 里能看到的全部 skill 名
 | 2 | brief 末尾有"权限被拒处理"指引? | ✅ |
 | 3 | 跨仓/跨 workdir 路径都列禁了? | ✅ |
 | 4 | wait 脚本参数单位是毫秒? | ✅ |
-| 5 | Pro non-max 派工后准备 20 分钟主动轮询? | ✅ |
+| 5 | Pro non-max 派工后**不**主动轮询,等通知一次性查 part 表(铁律 3 2026-08-20 修订)? | ✅ |
 | 6 | 多任务已拆并行 session? | ✅ |
 | 7 | 状态表格列出所有 session 真实状态(not 上一条通知)? | ✅ |
 | 8 | dispatch 命令**没**用 `--command` flag?消息走 positional? | ✅ |

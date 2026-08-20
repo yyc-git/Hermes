@@ -11,6 +11,168 @@ description: "OpenCode 调度实战坑（Hermes / PowerShell 环境, 2026-08-19 
 
 ---
 
+## 🔴 wait 脚本 `stableMs` 必须 ≥ BDD/单测运行时间（2026-08-20 实锤,gts-auto 默认 120000 太短）
+
+**实测案例**(`ses_fe306c129ffeurtU5hLv797Hbp` + `ses_fe2e7f560ffewUdU0Jt6CXW7oX`):
+
+- PMXReduceFace 35+5 BDD 场景 + RED/GREEN 切换 + 全量 jest 实测 **3-5 分钟**
+- 默认 `stableMs=120000`(2 分钟) → wait 误判 idle 触达退出,但 agent 实际 `step-finish reason=tool-calls` + tokens=138K(有进度) → **agent 还活着**
+- 实测:用 `stableMs=900000`(15 分钟) 才不出问题
+
+**wait 退出后必查 part 表 step-finish reason**:
+
+```powershell
+C:\sqlite\sqlite3.exe C:\Users\Administrator\.local\share\opencode\opencode.db "SELECT substr(CAST(data AS TEXT),1,200) FROM part WHERE session_id='<sid>' AND CAST(data AS TEXT) LIKE '%step-finish%' ORDER BY time_updated DESC LIMIT 1;"
+```
+
+| step-finish reason | tokens | cost | 判断 | 下一步 |
+| | --- | --- | --- | --- |
+| `stop` / `completed` | | | ✅ 真完成 | 收产物汇报 |
+| `unknown` | = 0 | = 0 | ❌ LLM 静默失败(模型断流/额度用完) | 走 LLM 静默失败 SOP:`dead <model>` + `get` 拿 current + 重 dispatch |
+| `tool-calls` / `running` | | | ⚠️ **agent 还在跑**(跑 BDD/reduce/verify) | **立刻发「继续」唤醒,不发「继续」就死** |
+
+**派工 brief 必含**:`stableMs` 建议值(根据预估 BDD 时间)+「完成时显式写 step-finish reason=stop + commit hash」方便 bot 核对。
+
+## 🔴 socket 崩了 ≠ session 死亡（2026-08-20 实锤）
+
+**症状**:`proc_*` CLI exit 1 + "Error: The socket connection was closed unexpectedly" + 后续 `proc_*` 派工也失败。
+
+**判定**:CLI exit 1 ≠ server 端 session 死。查 DB `time_updated` 仍涨 = server agent 还在内存中跑(只是 CLI 这边 socket 断了)。
+
+**处理**:
+1. 查 DB 确认 server 端 session 存活(`time_updated` 仍涨)
+2. **不要重 dispatch**(双 session 冲突 + 浪费 token)
+3. 兄弟在 Web UI (4098) 手动点「继续」续跑同一 server session,bot 用 wait 脚本只监控不 attach
+4. 或发 `opencode run -s <sid> -m <原模型> --attach http://localhost:4098 --dir <项目> --no-replay "继续"`(必须 -m 与原 dispatch 一致,从 `.opencode-session-meta/<sid>.json` 读)
+
+**预防**:`--no-replay` flag 在某些 session 触发 BUN `UnknownError` 崩在 SessionPrompt.command → 但 `--no-replay` 是必须的(防历史重放),**不能去掉**。socket 崩是个别 case,接受偶发 + 用 Web UI 续跑兜底。
+
+## 🔴 改动纪律精简(2026-08-20 兄弟拍板,覆盖 8-18 过度约束)
+
+**兄弟原话**:「不需要我拍板啊,你直接dispatch。修改纪律:只有还原文件、git checkout的操作才需要我确认」
+
+**红线条目**(仍需兄弟拍板):
+- `git checkout` / `git restore` 还原文件
+- `git reset --hard` / `git stash pop` / `rm -rf` 不可逆操作
+- 改 `doc/` 和 `笔记/语雀知识库/` 目录(兄弟手动维护)
+- CloudBase 数据库集合增删改查
+- 线上/单机部署(必须兄弟确认)
+- 装依赖前(`yarn bootstrap`)
+
+**非红线条目**(bot 直接干不需拍板):
+- 改源码/复制文件/创建目录/改 build 配置/调阈值/加功能
+- 写 brief / dispatch / 合并 wt / 重 dispatch 同 brief
+- 改 skill 文件 / 改 memory / 改 AGENTS.md
+- 启用之前注释掉的代码
+
+**误读过度约束 = 兄弟拍桌**:
+- 「你直接让会话继续啊」(2026-08-18)
+- 「你去修复下啊」(2026-08-18)
+- 「不需要我拍板啊」(2026-08-20)
+- 「你为什么没有先删除旧的会话再dispatch啊」(2026-08-19)
+
+## 🔴 派工后通知精简(2026-08-20 兄弟拍板,终极简化)
+
+**兄弟原话**:「不需要告诉我」+「间隔太久了!而且这样消耗token大吗?」
+
+**核心规则**:**派工后绝对不主动通知「在跑」**(零通知)。只在三种情况通知:
+1. ✅ 任务完成 / git commit 落地(读 log + 报告)
+2. ❗ agent 红灯 / 卡死 / 60+ 分钟无进展
+3. ❓ 兄弟主动问时
+
+**绝对不**说「已 dispatch,sessionId=X,模型=Y,请稍等」之类开场白。
+
+**轮询与 token 真相**:
+- `process(action=log, session_id=<wait_id>, limit=2)` 查 wait stdout 是**纯工具调用 token=0**(跟 OpenClaw 老 poll 每轮触发 bot 整轮对话 + 全量 cacheRead 烧 2 亿+ 完全两回事)
+- Hermes `notify_on_complete` 自动唤醒 bot 后**一次性** `process(action=log, offset=-2)` + `git log -3` + 整轮回复 = ~1000 tokens
+- **混淆 OpenClaw 老 poll 与 Hermes 工具调用是错的** — 兄弟原话「每次才 1000token 吗?这很少可忽略不计」,1000 token 是整轮回复烧的,不是轮询本身
+- 自动轮询间隔:60s(标准模式)/ 120s(全自动模式)— token=0 但增加 signal 量,通知到达即停
+
+## 🔴 LLM fail 三态分类(2026-08-20 兄弟拍板,实测沉淀)
+
+| 失败类型 | step-finish reason | tokens | cost | 处置 |
+| | --- | --- | --- | --- |
+| **rate limit / 429 / quota** | 任何 | 任意 | 任意 | 等窗口 / 换模型 |
+| **401 / timeout / 5xx** | 任何 | 任意 | 任意 | 瞬时 → 同 session 发「继续」3 次(10s/30s/60s) |
+| **纯静默 `unknown`** | `unknown` | = 0 | = 0 | 删会话重开 → 重 dispatch 同 brief(flash-free 额度用完会明确报 rate limit,不会静默 unknown) |
+| **socket 崩** | 无 step-finish | 任意 | 任意 | 查 DB time_updated → 还在涨 = server 还活着,Web UI 续跑(详见上节) |
+| **OOM / Bun log 锁** | `tool-calls`/无 | 任意 | 任意 | 重 dispatch + 简化任务 |
+
+**核心原则**:`step-finish reason=unknown + tokens=0 + cost=0` 是模型额度耗尽或彻底断流的硬信号,**不是卡死**。立即 `dead` 落盘 + 切下一个免费模型。
+
+## 🔴 命令行 brief 传参 3 坑(2026-08-20 实测)
+
+**已落 `gts-dispatch-preflight`**:① `--command` 是 OpenCode 注册命令,普通 message 必须 positional;② `--attach` 必须带 `http://localhost:4098`;③ `--no-replay` 在某些 session 触发 BUN `UnknownError` 崩在 SessionPrompt.command → 派工默认**不加 `--no-replay`**(实际看,本次测 `--no-replay` 是必要的,CLI 崩是个别 case → 见上节 socket 崩处理)。
+
+## 🔴 Session 活跃判定 = DB `time_updated` 是唯一 ground truth（2026-08-20 实锤）
+
+> **兄弟原话(2026-08-20)**:「A v2 在跑啊!」—— bot 误判 volcark flash 静默挂 + 误删 A v1 重派 A v2, 都源于此条规则被违反。
+
+**判定口诀**:看 `session.time_updated`, **不看 `message.tokens.total`**(可能被截断为***)。tokens 是输出统计, 不是生死信号。
+
+| 判定信号 | 含义 |
+|---|---|
+| `session.time_updated > now-600000`(10min 内) | ✅ **活跃**, 不管 message.tokens/finish 长什么样 |
+| `last message.tokens.total = 0` + `finish` 缺失 | ❌ **不是静默挂**——只是中间消息被截断 |
+| `step-finish reason=tool-calls` | ✅ **还活着**(agent 在处理工具结果) |
+| `step-finish reason=stop/completed` | ✅ **真完成** |
+| `time_updated` > 20min 没动 + DB 有 step-finish 记录 | ⚠️ 边界,需查 part 表确认 |
+| `time_updated` > 30min 没动 | 🔴 真挂, 启动 gts-opencode-stop |
+
+**实测查询命令**:
+```powershell
+C:\sqlite\sqlite3.exe "$env:USERPROFILE\.local\share\opencode\opencode.db" `
+  "SELECT id, datetime(time_updated/1000,'unixepoch') AS updated FROM session WHERE id='<sid>'"
+```
+
+**反例(2026-08-20 代价)**:A v2 实际 tokens=173K + reasoning=11K + finish=tool-calls = 正常思考中, 但 bot 看到"tokens=*** + finish 缺失"判"静默挂" → 误加 volcark flash blacklist + 准备重派 → 兄弟拍桌纠正。浪费了 1 个 session + 1 次 dispatch。
+
+---
+
+## 🔴 静默挂判定不要轻易加 blacklist（2026-08-20 兄弟拍板）
+
+> **兄弟原话(2026-08-20)**:"volcark flash 现在可以用啊! 3次静默挂是指如果它不能用后, 你要隔断时间再试它2次啊, 而不是不同的任务或者不同的模型!"
+
+**判定挂死 → 加 blacklist 的硬条件(全部满足)**:
+1. ✅ 同一 session/同一 brief 持续 `step-finish reason=unknown` + `tokens.total=***`
+2. ✅ 对该 session 发「继续」3 次(间隔 10s / 30s / 60s),3 次都失败
+3. ✅ 同一模型在**最近 1-2 小时内**有 ≥2 个不同任务都出现同样症状
+
+**反模式**:
+- ❌ 看到 1 个 session 静默 → 立即加 blacklist → 把 volcark flash(实际可用)误杀
+- ❌ 不同任务/不同时间看到同样症状 → 当作"模型挂" → 实际可能是 server 卡 / 工作区冲突 / 某个 session 死循环
+
+**recover 命令**:
+```powershell
+node scripts/opencode-free-model-state.mjs revive <model> --dir D:\GitHub\GTS-Play
+```
+
+---
+
+## 🔴 notify 越界前 5 步验证纪律（2026-08-20 实锤）
+
+**场景**:bot 看到 `git diff` 里有些文件被删 → 直接 notify.ps1 "agent 越界删了别人 PMX" → 兄弟拍桌"虚惊一场"。
+
+**5 步验证纪律(必须走完才 notify)**:
+
+| # | 步骤 | 工具 |
+|---|---|---|
+| 1 | 查 `session.time_updated` 看 session 是否真在跑 | sqlite3 DB |
+| 2 | 查 `part` 表最近事件, 看是不是我们派的 session | sqlite3 DB |
+| 3 | `event.data LIKE '%<filename>%'` 找原始 session ID | sqlite3 DB |
+| 4 | 比对原始 session ID 是不是当前派工的 session ID | 比对 |
+| 5 | 确认后才 notify + 写明"哪一 session 在什么时间删的" | notify.ps1 |
+
+**反例(2026-08-20 代价)**:bot 看到 git diff 有 2 个 PMX 标记 `D` → 直接 notify "agent 越界" → 兄弟质问 → 查 DB 发现是 **8-15 旧 session (mmd-workflow-fix) 未提交的工作残留**, **不是我派的 4 个 session 干的** → 虚惊一场, 浪费 1 条通知 + 兄弟拍桌。
+
+**搜索哪个 session 引用了文件**:
+```powershell
+C:\sqlite\sqlite3.exe "$env:USERPROFILE\.local\share\opencode\opencode.db" `
+  "SELECT aggregate_id, seq, type FROM event WHERE CAST(data AS TEXT) LIKE '%<file_pattern>%' ORDER BY seq DESC LIMIT 5"
+```
+
+---
+
 ## 🔴 恢复中断会话必须先清旧 session（2026-08-19 实锤教训）
 
 **场景**：会话因 429/rate-limit/超时中断后恢复，旧 OpenCode session 可能仍在 server 端运行。
@@ -158,6 +320,25 @@ Invoke-WebRequest -Uri "http://localhost:4098/api/session" -TimeoutSec 8 -UseBas
 
 ---
 
+## 🔴 Flash 模型「复读 brief」不改文件（2026-08-20 实锤，连续 3 轮复现）
+
+**症状**：dispatch 后 agent 只输出 brief 文本（part 表 `type: text`），不调用任何 tool（无 `type: tool`/`type: patch`），step-finish 后 `git diff --stat` 无文件改动。
+
+**实测**：flash-free 连续 3 轮（J/J2/J3）复读同一 brief，第 4 轮换 mimo-v2.5-pro（J4）立即成功改文件。
+
+**根因**：flash-free 在某些任务上下文（含 `.opencode-brief` + 长指令）下触发「复读」行为——读完 brief 后直接输出文本，不进入编辑流程。可能是上下文窗口或指令遵循能力不足。
+
+**识别方式**：
+1. wait exit 0 → `git diff --stat` 无改动
+2. part 表只有 `type: text`，无 `type: tool`/`type: patch`
+3. agent 输出内容 = brief 原文（复制粘贴）
+
+**处置**：立即换模型重派（mimo-v2.5-pro 或火山 flash），不要重试 flash-free。重派时 brief 内容不变，只换 `-m` 参数。
+
+**预防**：简单任务（≤5 行改动）如果 flash-free 复读 1 次 → 直接换 pro，不要浪费 3 轮。
+
+---
+
 ## 🔴 免费模型额度用完（`Free usage exceeded`）是硬信号，立即 dead + 切下一个（2026-08-19 兄弟指出）
 
 **症状**：免费模型 dispatch 后 session 卡死无产出（只回显 brief，`time_updated` 停），Web UI / CLI 报 `Free usage exceeded, subscribe to Go`。
@@ -193,7 +374,7 @@ opencode run ... -m opencode/hy3-free ...
 2. **给 fallback 指令**：「如果权限被拒，改用 brief 摘要 + 已读 commit 信息继续，不要重试被拒操作」
 3. **主动声明够用**：「已读 commit 信息足够了，不要为补 detail 再读 git」
 
-**检测（派 Pro 后每 20 分钟主动查，不等 wait 通知）**：
+**检测（派 Pro 后通知到达一次性查，不主动轮询，2026-08-20 修订）**：兄弟拍板「派工后不主动轮询」(成本/收益不符),改为**等 Hermes `notify_on_complete` 自动唤醒 → 一次性** `process(action=log, offset=-2)` + 查 DB part 表:
 ```powershell
 C:\sqlite\sqlite3.exe C:/Users/Administrator/.local/share/opencode/opencode.db `
   "SELECT substr(data,1,300) FROM part WHERE session_id='<sid>' ORDER BY time_updated DESC LIMIT 5"
@@ -201,7 +382,7 @@ C:\sqlite\sqlite3.exe C:/Users/Administrator/.local/share/opencode/opencode.db `
 # → gts-opencode-stop 杀掉 → 补全 brief 摘要重新派
 ```
 
-**兄弟原话（2026-08-19 质问）**：「为什么这么久等没检测到？如何避免」—— 派 Pro 后**必须主动轮询**，不能等 wait 脚本通知（wait 的 stableMs 判定被 perm-deny 后仍收到 part 记录而失效）。
+**兄弟原话（2026-08-19 质问）**：「为什么这么久等没检测到？如何避免」—— 派 Pro 后**必须主动查 DB**(2026-08-20 修订:不轮询但通知到达必查),不能仅凭 wait 脚本判定(perm-deny 后仍收到 part 记录,wait stableMs 失效)。
 
 ---
 
@@ -287,6 +468,107 @@ cmd /c "opencode.exe run "hi" -m <provider-name>/<model-id> --attach http://loca
 - 冒烟测试**必须用 `--attach` 模式**验证自定义 provider
 - 独立 `--port` 预检**仅适用于已重启 4098 后的 provider**（确认 4098 已加载新配置）
 - 验证成功标志：输出第一行 `> build · <目标模型名>`，不是 fallback 模型名
+
+---
+
+## 🔴 Bun/AVX crash — 部分模型触发 CLI 段错误（2026-08-20 实锤）
+
+**症状**：`opencode run` CLI 立即 crash，exit code 3，输出：
+```
+panic(main thread): Failed to start HTTP Client thread: Unexpected
+panic(main thread): Illegal instruction at address 0x...
+CPU lacks AVX support. Please consider upgrading to a newer CPU.
+oh no: Bun has crashed.
+```
+
+**根因**：opencode CLI 是 Bun 编译的单文件。部分模型（如 `volcark/deepseek-v4-pro`）的 API 调用路径触发 Bun 不兼容的代码段（CPU 缺 AVX 指令集）。不是所有模型都触发——同机器上 `mimo-v2.5-pro` 正常。
+
+**处理**：
+1. CLI crash（exit 3 + "panic"）→ **立即换模型重试**（不等 3 次）
+2. 优先换同级别模型：pro→mimo pro，flash→火山 flash
+3. 如果所有模型都 crash → 汇报兄弟（可能是机器级问题）
+
+**实测**：2026-08-20 volcark pro 连续 2 次 Bun crash → 换 `mimo-v2.5-pro` 立即正常
+
+**与 opencode.json 默认 model 陷阱的区别**：那个是"没传 `-m` 用了付费兜底"，这个是"传了 `-m` 但 CLI 本身 crash"。两者都会导致 session 没创建，但根因不同。
+
+---
+
+## 🔴 brief 多 Phase 导致 agent 只完成容易的部分（2026-08-20 PMXReduceFace 实锤）
+
+> **brief 写了 Phase 1(检测) + Phase 2(算法) → agent 完成 Phase 1(加 270 行检测代码)就报完成,核心算法没改。** 用户看到「verify 通过」以为修好了,实际视觉空洞依旧。
+
+**根因**:BDD/verify 只检查拓扑不检查几何,检测工具增强不等于问题修复。Agent 优先完成容易的(加检测代码)而跳过难的(改算法)。
+
+**规则**:
+1. brief 只写**一个核心目标**,不要分 Phase。多步 = 多个独立 brief + 独立 dispatch
+2. 验证标准必须包含**视觉检查**(不仅是工具输出)
+3. binary 文件(如 PMX)改完后必须**杀掉 dev server + 重启**才能生效(webpack-dev-server 不热加载二进制文件)
+
+**反例**:brief「Phase 1 修检测 + Phase 2 修算法」→ agent 停在 Phase 1,40/40 BDD 全绿但空洞依旧
+**正确**:brief「修 collapseCreatesHole 让它拒绝所有产生空洞的折叠。不改检测工具。HOLE_TOL 保持不变」→ agent 聚焦算法
+
+## 🔴 Pro 场景模型降级铁律（2026-08-20 实锤）
+
+> 火山 pro 报「5小时usage quota exceeded」→ 我降级到 flash-free → 兄弟拍桌「这是pro场合，照理说火山pro挂了，应该用什么模型？」
+
+**铁律**:Pro 场景的模型降级链 = **Pro 级别内轮换**,绝不跨级别降级:
+1. 火山 pro → **小米 pro**(mimo-v2.5-pro) → go pro
+2. ❌ ~~火山 pro → flash free~~ (降级到 Flash = 违反铁规)
+3. 免费时段也不能用 Flash 顶替 Pro 任务
+
+## 🔴 dispatch 前两步检查（2026-08-20 实锤，连续犯 2 次）
+
+**兄弟原话**：「调度之后没有wait和定期轮询吗？」「为什么没有用停止skill停止旧的？」
+
+**两步检查（dispatch 前 10 秒，缺一不可）**：
+
+| # | 检查 | 命令 | 不通过则 |
+|---|------|------|----------|
+| 1 | **停旧 session** | `gts-opencode-stop` skill 流程（查 DB → delete → 三重验证） | 不能 dispatch 新的 |
+| 2 | **查 free model 状态** | `node scripts/opencode-free-model-state.mjs get --dir <project>` | 用 current 模型；额度耗尽 → dead + 切下一个再 dispatch |
+
+**反模式**：
+- ❌ 直接 dispatch 不查旧 session → 双 session 冲突
+- ❌ 直接 dispatch 不查 free model → 用已耗尽的免费模型 → 浪费一轮 + CLI exit 0 但无产出
+- ❌ dispatch 后不管，等兄弟问才查 → 兄弟拍桌「你怎么没有检测到？」
+
+**正确流程**：
+```
+停旧 session → 查 free model 状态 → dispatch(用 current) → 启 wait + watchdog
+```
+
+---
+
+## 📚 CLI 参数条件跳过模式（skipThreshold pattern）
+
+> 适用于：CLI 工具需要「显式传参时用简化逻辑，未传时保持原始行为」的场景。
+
+**问题**：`--skip-threshold` 默认值 50000 会让小 fixture（测试用 3902 面）也被跳过，破坏测试。
+
+**方案**：用 `xxxGiven` 标记区分显式传参 vs 默认值：
+
+```javascript
+// parseArgs:
+else if (a === '--skip-threshold') {
+  args.skipThreshold = parseInt(argv[++i], 10);
+  args.skipThresholdGiven = true;  // 标记显式传入
+}
+
+// reduceFaces destructuring:
+const { skipThreshold = 50000, skipThresholdGiven = false } = opts;
+
+// 跳过条件：
+const skipCond = skipThresholdGiven
+  ? totalTri <= skipThreshold           // 显式传入 → 简化逻辑
+  : (totalTri <= targetTri && totalTri <= skipThreshold);  // 默认 → 保持原始
+if (skipCond) { /* skip */ }
+```
+
+**适用场景**：
+- 新参数想引入更宽松/更严格的逻辑，但不想破坏现有测试
+- 默认值需要向后兼容，显式传入才启用新行为
+- demo/生产环境需要不同行为（demo 传 `--skip-threshold 50000`，测试不传）
 
 ---
 

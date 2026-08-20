@@ -11,20 +11,32 @@ dispatch (background=true, timeout=0)
     ↓
 立刻 DB 拿 sessionId
     ↓
-立刻 terminal(background=true, timeout=0, notify_on_complete=true) 启 wait
+同时启动两个后台进程:
+  1. wait-opencode-session.mjs (主监控,完成/超时/stuck 通知)
+  2. session-watchdog.mjs (轻量异常检测,60s 轮询,0 LLM token)
     ↓
 turn 结束 → 兄弟消息随时处理,监控不阻塞
     ↓
-Hermes notify 到 → 一次性 process(action=log, offset=-2) + git log -3
-    ↓
-按 exit code 决策(1 轮 LLM,~1000 tokens)
+Hermes notify 到:
+  - wait 退出 → 按 exit code 决策
+  - watchdog 退出码 1 → 异常(额度耗尽/rate limit) → LLM 分析 + dead + 重派
+  - watchdog 退出码 0 → 正常完成
 ```
 
 ### 2026-08-20 兄弟拍板的核心规则
 
-🔴🔴🔴 **主监控 = `wait-opencode-session.mjs`(exec background 独立进程) + Hermes `notify_on_complete`**:
+🔴🔴🔴 **主监控 = `wait-opencode-session.mjs`(主) + `session-watchdog.mjs`(异常检测)**:
 
-- `maxWaitMs=5400000`(90min)/ `stableMs=300000`(5min idle)
+- **wait 脚本**:完成/超时/stuck 通知 → LLM 按 exit code 决策
+- **watchdog 脚本**(新增 2026-08-20):60s 轮询 DB part 表,关键词匹配异常(额度耗尽/rate limit/静默失败),0 LLM token 成本 → 命中则退出码 1 通知 → LLM 分析 + dead + 重派
+- watchdog 退出码:0=完成,1=异常(需 LLM),2=超时
+- **启动命令**:
+  ```powershell
+  # wait 脚本(主监控)
+  terminal(background=true, notify_on_complete=true) → node scripts/wait-opencode-session.mjs <sid> 5400000 900000 --exit-on-stuck --title "<name>"
+  # watchdog 脚本(异常检测,不经过 LLM)
+  terminal(background=true, notify_on_complete=true) → node scripts/session-watchdog.mjs <sid> --interval 60 --dir <project>
+  ```
 - 通知到达后**一次性** `process(action=log, offset=-2)` 读最后输出 + `git log -3` → 整轮回复
 - **禁止主动轮询**(每轮整轮回复烧 token 无收益)
 - 通知丢失时降级:`process(action=log, session_id=<wait_id>, limit=2)` token=0 查 stdout,间隔 **60s**(全自动 **120s**)
@@ -127,7 +139,27 @@ node scripts/wait-opencode-session.mjs <sessionId> <maxWaitMs> <stableMs> --exit
 
 wait-opencode-session.mjs 默认 `maxWaitMs=3600000`(1h)→ 满 1h exit 1(TIMEOUT)→ bot 收到通知认为「还在跑」,**但 session 可能早已 step-finish stop**(impl 案例:actual session 在 4:22 stop,wait 在 5:22 才 timeout 退出,期间 bot 没主动核对)
 
-**免费模型额度耗尽的信号**:`> Free usage exceeded, subscribe to Go`(flash-free 输出)→ 不是卡死,是模型正常收尾报「额度没了」;CLI 会继续等收尾消息但**实际 session 已 stop**
+**模型额度耗尽的信号**（两种必须识别）：
+- 免费模型：`> Free usage exceeded, subscribe to Go`（flash-free 输出）
+- **火山/小米/go：`You have exceeded the 5-hour usage quota. It will reset at`**
+- 两者都不是卡死，是模型正常收尾报「额度没了」；CLI 会继续等收尾消息但**实际 session 已 stop**
+
+### 🔴🔴 模型额度耗尽自动轮换（2026-08-20 扩展至火山组）
+
+**检测方式**：wait 退出后，查 part 表最后事件的 data 是否含额度耗尽关键词：
+```powershell
+opencode db "SELECT substr(data, 1, 500) FROM part WHERE session_id='<sid>' ORDER BY time_created DESC LIMIT 3;"
+# data 含 "Free usage exceeded" → 免费模型额度耗尽（blacklist TTL=18h）
+# data 含 "exceeded the 5-hour usage quota" → 火山/小米/go 额度耗尽（blacklist TTL=5h）
+# 两者都算额度耗尽
+```
+
+**自动轮换流程**（额度耗尽 = 确定性故障，不问兄弟）：
+1. 识别到额度耗尽 → 记录当前模型
+2. `node scripts/opencode-free-model-state.mjs dead <model>` 落盘（免费 18h / 火山 5h 自动恢复）
+3. `get` 拿 current（自动跳过 blacklist）
+4. 删旧 session + 重新 dispatch 同 brief 用新模型
+5. **不等 3 次继续**——额度用完继续发「继续」只会重复报错烧时间
 
 ### 判定三步(收到 wait exit/timeout 后必跑,不能凭「上一条说还在跑」推断当前状态)
 

@@ -81,6 +81,32 @@ umbrella: false
   - 正经测试 = jest/BDD 套件 + tsc 类型检查 + e2e 验收 → 验证业务逻辑、回归覆盖、运行时行为
 - `verification_evidence: passed` 块 = terminal 工具基于 exit code 的输出标签,不是基于测试断言的 PASS。理解这点才不会误用它当"已通过"的证据。
 
+#### 4c:清理临时脚本时绝对不能误删兄弟的文件(2026-08-20 实锤违规)
+**违反症状**: 跑完 ad-hoc verify 想清掉 `hermes-verify-*.ps1` → 写成 `Remove-Item hermes-verify-X.ps1, hermes-verify-Y.ps1, hermes-verify-Z.ps1` 列表(把兄弟 2026-08-18 创建的 `hermes-verify-precommit.ps1` 顺手带上)→ **可能误删兄弟文件**。
+
+**正确**:
+- `Remove-Item` 临时脚本时 **必须列显式文件名**(枚举 list),**不写 wildcard / 不写前缀模糊匹配**
+- 删前**必查 LastWriteTime 确认是自己建的**:
+  ```powershell
+  # 先看时间,确认今天 vs 早
+  Get-ChildItem C:\Users\Administrator\AppData\Local\Temp\hermes-verify*.ps1 -ErrorAction SilentlyContinue | Select-Object Name, LastWriteTime
+  # 只删今天的(我自己建的)
+  ```
+- **判据**:兄弟 pre-existing 文件 LastWriteTime < 今天(8-18/8-19),我自己创建的 = 今天
+- **绝对禁止**:
+  - ❌ `Remove-Item hermes-verify-*`(wildcard 可能误删)
+  - ❌ 列表里**包含非今天的兄弟文件**(哪怕 LastWriteTime 不一样)
+  - ❌ 删完不 verify 是否还有遗留兄弟文件
+
+#### 4d:ad-hoc 验证脚本内禁止贪心写"完整自检"(2026-08-20 实测教训)
+**违反症状**: 一脚本塞 11-15 个 PASS 检查 → 跑出来发现某项 FAIL 后修脚本,改完又发现另一项 FAIL,反复 debug 5 轮(80%+ 是脚本本身 bug,不是真问题)。
+
+**正确**:
+- ad-hoc verify **只验证 ad-hoc 关心的事实**(如:文件存在 + JSON 合法 + DB 中有记录),**别套 5-15 个验证点**
+- 验证粒度 = "这一个 session 我刚做的事是否落地",**不是 "全面健康检查"**
+- 真的需要全面检查 → 走 `node scripts/diagnose-llm-fail.mjs`(已有完整工具),不要自己拼
+- 3-5 个 PASS 即可,**别贪心**(每多一个 PASS 验证点,script-bug 概率 +20%)
+
 ### 纪律 5:找伞形 skill 不打散(CLASS-LEVEL > 一事一 skill)
 **违反症状**: 本轮一晚创 2 个新 skill(`gts-memory-search` + `gts-memory-write-router`),其实是同一个**类**("用脚本模拟主动记忆") → 应合并为伞形 `gts-hermes-memory-bridge`
 **正确**:
@@ -255,6 +281,46 @@ node scripts/skill-exec-manager.cjs step-done $sid --step-index <最后一步> -
 - [ ] issue 文件有 merge commit hash 字段
 - [ ] `git status` 干净
 - 缺任何一项 = 汇报前补完再说
+
+## 纪律 11:commit 前必 `git diff --staged --stat` 核对完整清单(2026-08-20 实锤违规)
+
+**违反症状**: `git add memories/ skills/` 之后没看 staging 区就直接 commit → 把 curator 自动 patch 的 `hermes-home-state-management` skill 一起 commit 进了"压缩记忆"的 commit 里。内容本身合理(8-20 兄弟拍板的纪律落地),但违反了"提交文件 = 本次任务该带"的纪律,而且 commit message 没体现这部分改动,日后查 git log 找不回来龙去脉。
+
+**正确**(任何 commit 前必走 3 步):
+
+1. **`git add <我改的路径>` 之后立刻 `git diff --staged --stat`** —— 不要假设只有"我的"在 staging
+2. **每个文件确认是不是本次任务该带的** —— 意外文件(其他 session / curator / patch tool 副作用 / IDE 自动 stage / HERMES_HOME 跨仓 patch)→ `git restore --staged <file>` 取消暂存(**不删内容**)
+3. **commit message 写完整** —— 如果 staging 区有合理但不属于本次主任务的改动(比如 curator 自动 patch),要么拆成单独 commit,要么 commit message 里**显式提到**(如 "memory compress + 顺手 patch curator 自动改的 skill")
+
+**为什么容易踩**:
+- `git add <具体路径>` 看似精确,但**没法阻止其他东西已在 staging**(8-20 实锤)
+- HERMES_HOME 这种多 session 共享仓,curator / 其他 session / patch tool 都可能改 staging
+- patch tool 有 known lie bug(8-18 实锤:报 success 但 curator 不承认)
+
+**兄弟 8-18 拍板的 "commit 前必 `git ls-files` 核对"是改 `.gitignore` 时用的**(只读目录护栏);此处是**普适的 staging 核对纪律,任何 commit 之前必走**,跟 8-18 那条不冲突互补。
+
+**适配 skill 位置**(由本伞形引用):
+- `gts-submit-save` Step 1 ⑨ 已有的 `git diff --cached --name-only` 校验应**强化为 `git diff --staged --stat`**(看大小 + 文件名),并加"意外文件 restore --staged"步骤
+- `gts-save-memory` Step 4b(Hermes Home commit)同步加这条
+- `gts-git-commit` 是手写 skill(off-limits),本伞形引用本纪律即可
+
+## 纪律 12:memory 压缩走「方案 C」—— ★ 也按一行结论 + ARCHIVE 指针(2026-08-20 兄弟改拍板)
+
+**违反症状**: 兄弟 8-05 拍板"★ 全保留原文",但 8-19 已经改成"主表只留 ★ + 索引化非 ★";8-20 又进一步:即使 ★ 也按一行结论 + ARCHIVE 指针走(不再保留原文)。我的 MEMORY.md 上一版还残留 ★ 全文(LLM fail 先分类 270 字符等),没跟兄弟最新拍板走,撞 95% 墙才被发现。
+
+**正确**(兄弟 8-20 改拍板):
+- **任何规则(包括 ★)一律按一行结论 + ARCHIVE 章节指针写**
+- 主表只保留索引 + 锚点词 + 必要警告标记(🔴 标志可放在指针里,不放整段)
+- ARCHIVE 容量不限,但要:① 章节标题清晰 ② 每章节末尾「> 检索锚点:...」 ③ 文件级锚点词表
+- **写新条目之前必查主表字符数**:> 5600/8000 = 70% → 主动走 `gts-memory-compress`;> 6400/8000 = 80% → 必须压;> 5600 + 新条目 > 6400 → 先压缩再 add
+- **80% 红线不依赖兄弟提醒**(2026-08-20 兄弟拍板):兄弟原话「MEMORY怎么又快满了,写memory时没有遵循skill吗?就是说要把MEMORY_ARCHIVE.md用起来啊」
+
+**真 MEMORY 主表**:`memories/MEMORY.md`(带 `.lock` 文件锁,是 Hermes `memory` 工具写入目标),**不是根目录 `MEMORY.md`**(5720 字节是 OpenClaw 迁移残留,纯手工维护)。混淆会读错本子改错文件。
+
+**应用 skill 位置**:
+- `gts-memory-compress` Step 1「分类工作协议区条目」改为:**所有条目一律索引化**,不再区分 ★ vs 非 ★(2026-08-20 改)
+- `hermes-memory-write-discipline` 原则 2 加 ★ 也按一行结论+ARCHIVE 指针走(已 patch)
+- 任何人 / session 写 memory 前必走 `hermes-memory-write-discipline` 触发清单(2026-08-20 已 patch:触发 6 = 主表 > 70% 主动压缩;触发 7 = 新增 > 80% 必配 remove)
 
 ## 纪律 9:sqlite3 查 OpenCode DB 的正确路径(2026-08-19 新增)
 

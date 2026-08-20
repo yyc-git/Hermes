@@ -128,6 +128,37 @@ node .tmp-dispatch-<task>.cjs 2>&1 | Out-File $env:TEMP\dispatch-<task>.log
 
 **铁律**:**`opencode-go/*` 永远兜底,从不首选**。dispatch 前**显式** `-m` 走优先级第一位,挂了就按兄弟硬偏好 2-3 步走,**不要**省事直接 opencode-go。**付费版是最后兜底,不是首选**。
 
+### 🔴 派工前必跑 Step 0:free-model-state 文件读取(2026-08-20 兄弟实锤纠错)
+
+**兄弟 2026-08-20 原话**:"flash场景不是优先用免费组吗?你怎么回事啊?"
+
+**触发场景**:任何 dispatch(无论免费/付费时段)在写 `opencode run -m <model>` 之前,bot 凭印象写了"火山 flash + Pro 试→免费组轮换 fallback",**完全反向**——免费时段必须用免费组首选,不是 fallback。
+
+**硬性 Step 0(派工前必跑)**:
+
+```powershell
+# 派工前 1 步(无论时段)
+node scripts/opencode-free-model-state.mjs get --dir D:\Github\GTS-Play
+# 输出:{"current":"opencode/deepseek-v4-flash-free","blacklist":[]}
+# current 即为派工用的 -m 参数(免费时段)
+# 非免费时段默认 = volcark/deepseek-v4-flash-ga-260731
+```
+
+**禁止的派工模式**:
+- ❌ 凭记忆/印象写 `-m volcark/...`(免费时段必须用 free current)
+- ❌ 用"免费组 → 火山 flash"以外的优先级顺序
+- ❌ 跳过 `get` 直接派工(即使前 5 次派工都用了同一个模型)
+- ❌ 派工后**才**意识到用错了模型(发现时已经烧 1 次 session)
+
+**正确的派工模式**:
+1. 读时段(`bjHour` 9-12/14-18 = 免费时段)
+2. 读 state 文件(`get` → `current`)
+3. 用 `current` 写 `-m`(免费时段 = free current;非免费时段 = 火山 flash/pro)
+4. Pro 任务一律 `volcark/deepseek-v4-pro-ga-260813`(火山 pro 优先),不走免费组
+5. dispatch 后**立即**写 `.opencode-session-meta/<sid>.json`(见下方"session-meta 落盘")
+
+**与 dispatch-checklist.md Step 0 的衔接**:Step 0 查 OpenCode DB 同任务活跃 session(避免双 session 撞车),本节查 free-model-state(避免用错模型)。**两者都必跑**。
+
 **🔴 dispatch 后必须查 session.model 字段验证**：
 
 ```powershell
@@ -140,6 +171,40 @@ opencode db "SELECT substr(CAST(data AS TEXT),1,400) FROM message WHERE session_
 **验证结果处理**：
 - ✅ model 字段是预期的 → 落盘 `.opencode-session-meta/<sid>-<title>.json`，继续监控
 - ❌ model 字段不是预期的（用了付费兜底）→ 立即 `opencode session delete <sid>` 停掉，重新 dispatch（必须传 `-m`）
+
+### 🔴 dispatch 后立即写 session-meta 文件(2026-08-20 实测,4 session 并行踩坑)
+
+**触发**:派工后 30 秒内必须落盘 `.opencode-session-meta/<sid>.json`(兄弟硬偏好,续跑时读出并遵循 model 绑定,**不能靠 `-m` 参数**)。
+
+**反面教材(2026-08-20 XiaHui fix 4 session 并行实测)**:bot 派了 4 个 session,只写了 3 个 session-meta,A v2 重派时**忘写 meta** → 后续 verification 检查发现 FAIL 才补写。**派工 + 写 meta 必须是同一个原子动作,不能"先派再补"**。
+
+**正确流程(派工后 30 秒内三件套)**:
+
+```powershell
+# 1. 拿 sessionId(opencode DB 查)
+$id = C:\sqlite\sqlite3.exe "$env:USERPROFILE\.local\share\opencode\opencode.db" "SELECT id FROM session WHERE title='<task>' ORDER BY time_created DESC LIMIT 1"
+
+# 2. 写 meta 文件(.opencode-session-meta/<sid>.json,文件名 = sessionId + .json)
+$meta = @{
+    sessionId  = $id
+    title      = "<task-title>"
+    task       = "<一句话描述>"
+    modelID    = "<如 volcark/deepseek-v4-flash-ga-260731>"
+    providerID = "<volcark|opencode|...>"
+    variant    = "default"
+    startedAt  = "<UTC ISO>"
+    briefPath  = ".opencode-brief-<task>.md"
+    issuePath  = "<关联 issue 路径>"
+    step       = "<B2|C|M|...>"
+} | ConvertTo-Json -Depth 3
+$meta | Out-File ".opencode-session-meta\$id.json" -Encoding utf8
+
+# 3. 启 wait 脚本(terminal(background=true, notify_on_complete=true))
+```
+
+**禁止**:派工后**忘写** meta 等到 verification 检查 FAIL 才补——verification 会盯这个,补写 ≠ 原子动作。
+
+**模型绑定用途**:续跑同一个 session 时(`opencode run -s <sid> "继续..."`),`-m` 参数被 server 忽略,直接用 session 绑定的 model。所以**meta 必须写 model 字段** 才能续跑正确。
 
 **为何 6 次 dispatch 都失败**（2026-08-19 实测）：
 1. 兄弟问"怎么样了？付费版只是兜底啊"——发现自己前一轮用了 `opencode-go/deepseek-v4-flash`
@@ -304,3 +369,87 @@ node scripts/wait-opencode-session.mjs <sid> 5400000 300000 --exit-on-stuck --ti
 | "review 我刚派的任务" | ❌ | ✅ |
 
 **记忆点**:兄弟说"读资料" = hermes 自身工具(`read_file`/`search_files`/`terminal` 跑 git/sqlite/findstr)。兄弟说"运行 X" / "派 X" = OpenCode 派工。**别把 hermes 读资料能力包装成派 OpenCode 任务**。
+
+#### 教训 8:wait `stableMs` 必须 ≥ 600000 (10 min) 全自动化,300000 (5 min) 普通(2026-08-20 实测)
+
+**根因**:gts-auto 默认 `idleTimeoutSec=120` (120s=2min) 在 BDD/单测场景下**严重不够**。PMXReduceFace `yarn test:bdd --runInBand` 跑 35+ BDD 实测 5+ 分钟,期间 agent 调 `npx jest ...` 跑命令间隙无 part 更新,wait 误判 idle 触达退出 → agent 实际 `step-finish reason=tool-calls` 还在跑。
+
+**两次踩坑(2026-08-20 实测)**:
+- `stableMs=120000`(gts-auto 默认):wait exit 后查 part 表 `reason=tool-calls`,agent 还在跑 BDD
+- `stableMs=300000`(5min):仍然不够,再次误判
+- `stableMs=900000`(15min):最终正确等到完成
+
+**wait 退出后,先查 part 表 `step-finish reason` 字段再决定下一步**(避免误判导致重 dispatch 或发「继续」):
+
+```powershell
+# wait 退出后 30 秒内必跑
+opencode db "SELECT substr(CAST(data AS TEXT),1,300) FROM part WHERE session_id='<sid>' ORDER BY time_updated DESC LIMIT 1" --format json
+```
+
+| part 最后 step-finish reason | 结论 | 下一步 |
+|---|---|---|
+| `stop` / `completed` | ✅ 真完成 | 收产物汇报 |
+| `tool-calls` / `running` | agent 还在调用工具,wait 误判 | 发「继续」唤醒(读 meta 拿原 `-m`),**不要**进下一阶段 |
+| `unknown` + tokens 0 + cost 0 | 🔴 LLM 静默失败 | 走静默失败 SOP |
+
+**🔴 硬性规则**:
+| 场景 | `stableMs` 推荐 | 理由 |
+|---|---|---|
+| 全自动模式 + BDD/单测 | **600000-900000 (10-15 min)** | jest/BDD 跑 5+ 分钟正常,工具调用间隙无输出 |
+| 普通模式 / 轻量任务 | 300000 (5 min) | Flash 测试完成通常 < 2 min |
+| Pro/Max 报告阶段 | 3600000-4800000 (60-80 min) | 模型内部思考+报告生成阶段长 |
+
+**铁律**:**不要凭 wait 退出码 0/3 推断「完成/卡死」**,必须查 part 表。看到 `reason=tool-calls` 就发「继续」(读 meta 拿原 `-m`,不要凭记忆),**不要进下一阶段或重 dispatch**(避免双 session 冲突)。
+
+#### 教训 9:LLM 静默失败 `reason=unknown + tokens=0` 的快速处置(2026-08-20 实测)
+
+**触发**:wait exit 4 或查 part 表 `reason=unknown` + `tokens.input=0, tokens.output=0, cost=0`。
+
+**处置**:
+| 模型 | 步骤 |
+|---|---|
+| 付费(火山/小米/go) | ①立刻发「继续」唤醒(读 meta 拿原 `-m`)→ ②wait 重启 → ③3 次失败后 stop + 重 dispatch |
+| 免费(opencode/*) | ①对同一模型发「继续」重试 3 次,间隔 10s/30s/60s → ②3 次失败 + 明确报错 = 真挂 → ③`node scripts/opencode-free-model-state.mjs dead <model>` + 用 `get` 拿 current 切下一个 + 重 dispatch |
+
+**关键**:`reason=unknown` **不等于**"模型挂",可能是瞬时网络/agent 内部问题。先发「继续」(免费模型按 10s/30s/60s 间隔 3 次),3 次后看是否恢复 + 有明确报错才记 dead。
+
+#### 教训 10:socket connection closed ≠ session 死(2026-08-20 实测)
+
+CLI exit 1 报 `"The socket connection was closed unexpectedly"`(`B:/~BUN/root/chunk-46zs0me7.js:1094:15735` 抛 `UnknownError`):
+
+- server agent **可能仍在内存中运行**(DB `time_updated` 持续涨 + 事件 seq 推进)
+- 优先 Web UI 续跑同一 session(兄弟手动点继续),不要立即重 dispatch(避免双 session 冲突)
+- 重 dispatch 前必查:`opencode db "SELECT time_updated FROM session WHERE id='<sid>'"` — 还在涨 = server 活着,等通知
+- 如果 server 真死 → 才按 gts-auto 4 次失败递增策略重派(Flash→Flash→Pro→Pro+max)
+
+**反面案例**:XiaHui Step 2 session(`ses_fe2e7f560ffewUdU0Jt6CXW7oX`) socket崩了 → 误以为任务失败 → 删除 session → 重 dispatch 浪费一轮。**正确做法**:查 DB 确认 server 还在才删,不在则继续等。
+
+#### 教训 11:续接 session 前必须清理残留 opencode run 进程(2026-08-20 实测)
+
+**症状**:多次 dispatch「继续」到同一 session 时,新 dispatch 的 CLI 进程无输出/静默退出(exit 4294967295=-1),DB 无新 part 记录。旧的 opencode run 进程仍活着,占着 session 消息队列入口。
+
+**根因**:前一次 dispatch 的 CLI 进程残留(被 `Stop-Process` kill 但 opencode.exe 子进程存活,或 CLI 没退出)。多个 opencode run 进程竞争同一 session → 新进程消息被排队或丢弃。
+
+**续接前必做(清理残留进程)**:
+```powershell
+# 查所有 opencode run 进程(排除 serve)
+Get-CimInstance Win32_Process -Filter "Name='opencode.exe'" |
+  Where-Object { $_.CommandLine -match 'opencode run' -and $_.CommandLine -notmatch 'serve' } |
+  Select-Object ProcessId, @{N='Args';E={$_.CommandLine.Substring(0, [Math]::Min(100, $_.CommandLine.Length))}}
+# Kill 全部 + 等 2 秒 + 确认只剩 server → 再发「继续」
+```
+
+**反面案例(2026-08-20)**:Pro session 火山额度耗尽 → 尝试 hy3-free 续接 → flash-free 续接 → 全部无输出。查 `Get-CimInstance Win32_Process` 发现 **5 个 opencode run 进程**同时抢同一 session。kill 残留后重派才成功。
+
+#### 教训 12:Pro 额度耗尽必须同级别 fallback,不能降级到 Flash(2026-08-20 实锤)
+
+**兄弟原话**:「这是pro场合,照理说火山pro挂了,应该用什么模型?」
+
+**错误**:火山 Pro 报 `Free usage exceeded`(5 小时限额) → 我 fallback 到 flash-free(降级)。兄弟纠正后用 mimo-v2.5-pro(同级别 fallback)。
+
+**正确 Pro fallback 链**:
+1. `volcark/deepseek-v4-pro-ga-260813` (火山 Pro) — 首选
+2. `xiaomi-token-plan/mimo-v2.5-pro` (小米 Pro) — 火山挂了
+3. `opencode-go/deepseek-v4-pro` (go Pro) — 都挂了才用
+
+**🔴 严禁**:Pro 任务降级到 Flash。场景决定模型等级 → 等级内按优先级 fallback → 不跨等级降级。额度耗尽是硬信号,立即切链中下一个,不需要 3 次重试。

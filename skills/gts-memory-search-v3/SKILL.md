@@ -184,6 +184,49 @@ SELECT ... FROM messages WHERE ... ORDER BY created_at DESC;  -- ❌ no such col
 
 **例外**:如果兄弟明确说"让 OpenCode agent 验证 X" → 那走 OpenCode 加载链,不在本 skill 范围。
 
+### 11. 🔴 "前几天才配了 X / 刚跑通了 Y" 类查询的源优先级(2026-08-20 实锤)
+
+**触发关键词**:
+- 「前几天」「刚刚」「才配了」「才接入」「刚跑通了 X」
+- 用户提的**模型/provider/CLI 名词**(`mino-v2.5-pro` / `MiniMax-M3` / `token plan` / `MiMo` / `xiaomi`)
+- 用户提的**实际跑通的命令/状态**(「opencode 跑通了 X」)
+
+**错误源优先级**(本会话踩):
+1. 默认查 MEMORY.md / MEMORY_ARCHIVE.md → ❌ 主表只记沉淀经验,**配置接入类改动通常不写主表**
+2. 默认 `search_files` 扫 skills/ 和 笔记/ → ⚠️ 能命中但命中率低、容易漏
+3. **跳过 state.db sessions 表** → ❌ 这是最大的漏 —— 配置接入类的会话标题就是「接入 X」「把 Y 配进 Z」,LIKE 一下立刻命中
+
+**正确源优先级**(2026-08-20 兄弟纠正后):
+1. **state.db sessions 表**(优先按标题 LIKE 关键词:`接入`, `token plan`, `配`, `Mimo`, `mino`, `Xiaomi`)→ 拿到会话 ID + model字段(知道当时实际用的是哪个模型/provider)
+2. **state.db messages 表**(拿到该会话 assistant 复述,内容里有完整 provider/model 字符串 + 接入命令)
+3. **`skills/**/*.md`**(用 `search_files` 搜完整 modelID,如 `mimo-v2.5-pro`,命中的是 model-priority-decision-tree.md / hermes-provider-config 这类已沉淀的决策文档)
+4. MEMORY_ARCHIVE.md + 笔记/daily(最后查,作为兜底补充)
+
+**实测验证**(本会话 2026-08-20):
+```sql
+-- 第1步:sessions 表按标题 LIKE 关键词定位(秒级命中)
+SELECT id, model, datetime(started_at,'unixepoch','localtime')
+FROM sessions
+WHERE title LIKE '%mino%' OR title LIKE '%token plan%' OR title LIKE '%Xiaomi%' OR title LIKE '%XiaHui%'
+ORDER BY started_at DESC LIMIT 15;
+-- → 20260819_133232_ef7734 | mimo-v2.5-pro | 2026-08-19 13:32:33 | 「修改调度skill:把mino-v2.5-pro(token plan)作为pro场景的...」
+
+-- 第2步:messages 表拿完整接入链
+SELECT id, role, substr(content,1,600) FROM messages
+WHERE session_id='20260819_130615_64145d' AND content LIKE '%token%'
+ORDER BY timestamp LIMIT 20;
+-- → assistant 原话:「Hermes 内置 provider 里有 xiaomi-token-plan-cn...env 变量名要求是 XIAOMI_API_KEY,而 .env 里现在存的是 XIAOMI_TOKEN_PLAN_API_KEY」
+
+-- 第3步:搜 skills/ 找决策表
+search_files pattern='mimo-v2.5-pro' path=skills/devops/...
+-- → gts-opencode-dispatch-hardening/references/model-priority-decision-tree.md
+--   Pro 场景优先级: volcark/deepseek-v4-pro-ga-260813 → mimo-v2.5-pro → opencode-go/deepseek-v4-pro
+```
+
+**反模式**:「我靠,你搜索下这3天的记忆(包括会话记忆)啊」—— 这是兄弟原话(2026-08-20),复盘根本原因就是**我没主动查 state.db sessions 表**,只在文件层面 grep。
+
+**强约束**:用户提任何「token plan / provider / modelID / 接入 / 跑通了 X」类关键词 → **state.db sessions 是第一步**,不是最后一步。
+
 ### 10. 🔴 4 源 cross-check 必跑(2026-08-20 实锤)
 
 **触发**:回答"项目级历史状态" + 多个源信息冲突时,**必须 4 源并查**才能定论:

@@ -1,6 +1,6 @@
 ---
 name: "gts-plan-review"
-description: "三阶段方案审核：Kimi K3 → GLM-5.2 Max → DeepSeek Pro Max，逐轮叠加审核，出最终报告"
+description: "三阶段方案审核：Mino-v2.5-pro → GLM-5.2 Max → 火山 Pro，逐轮叠加审核，出最终报告"
 ---
 
 # gts-plan-review — 方案审核 Skill
@@ -18,7 +18,7 @@ description: "三阶段方案审核：Kimi K3 → GLM-5.2 Max → DeepSeek Pro M
 **每轮完成后必须向兄弟汇报结果，等兄弟确认后再进行下一轮。**
 
 ```
-[收集资料] → [Kimi K3 报告2] → [汇报等确认] → [GLM-5.2 Max 报告3] → [汇报等确认] → [DeepSeek Pro Max 最终裁决] → [汇报]
+[收集资料] → [Mino-v2.5-pro 报告2] → [汇报等确认] → [GLM-5.2 Max 报告3] → [汇报等确认] → [火山 Pro 最终裁决] → [汇报]
 ```
 
 ---
@@ -54,18 +54,10 @@ description: "三阶段方案审核：Kimi K3 → GLM-5.2 Max → DeepSeek Pro M
 
 ### Step 0.5: 选择第1轮模型
 
-在进入第1轮前询问兄弟：
+第1轮默认使用 **Mino-v2.5-pro**（小米 token plan Pro，OpenCode 模型 ID：`xiaomi-token-plan/mimo-v2.5-pro`），**不可用时兜底 Kimi K3**（`opencode-go/kimi-k3`）。
 
-```
-第1轮审核用哪个模型？
-[1] Kimi K3（默认，回车即可）
-[2] GPT-5.6 Sol Xhigh
-
-> 
-```
-
-- 回车 / 1 → 设置 `context.firstRoundModel = "kimi-k3"`
-- 2 → 设置 `context.firstRoundModel = "gpt-sol-xhigh"`
+- 默认（回车即可）→ 设置 `context.firstRoundModel = "xiaomi-token-plan/mimo-v2.5-pro"`，兜底 `opencode-go/kimi-k3`
+- 若兄弟指定其他模型 → 按兄弟说的写
 
 > 📊 **状态追踪：** 记录到 context
 
@@ -75,9 +67,10 @@ description: "三阶段方案审核：Kimi K3 → GLM-5.2 Max → DeepSeek Pro M
 
 调度 OpenCode 审核所有原始报告/方案，出报告2。
 
-模型按 Step 0.5 的选择决定：
-- `kimi-k3` → `opencode-go/kimi-k3`，报告2文件名 `report2-kimi-k3.md`
-- `gpt-sol-xhigh` → `opencode/gpt-5.6-sol-xhigh`，报告2文件名 `report2-sol-xhigh.md`
+模型按 Step 0.5 的选择决定，默认 Mino-v2.5-pro，兜底 Kimi K3：
+- `xiaomi-token-plan/mimo-v2.5-pro` → 报告2文件名 `report2-mimo-v2.5-pro.md`
+- Mino 不可用 → 兜底 `opencode-go/kimi-k3`，报告2文件名 `report2-kimi-k3.md`
+- 兄弟指定其他模型 → 按兄弟说的写，报告2文件名 `report2-{模型名}.md`
 
 **brief 内容：**
 ```markdown
@@ -115,8 +108,9 @@ description: "三阶段方案审核：Kimi K3 → GLM-5.2 Max → DeepSeek Pro M
 ```
 
 **调度方式：** 按 `skills/opencode-schedule/SKILL.md` 标准流程执行。
-- Kimi K3 → 模型 `opencode-go/kimi-k3`，报告文件名 `report2-kimi-k3.md`
-- GPT-5.6 Sol Xhigh → 模型 `opencode/gpt-5.6-sol-xhigh`，报告文件名 `report2-sol-xhigh.md`
+- Mino-v2.5-pro → 模型 `xiaomi-token-plan/mimo-v2.5-pro`，报告文件名 `report2-mimo-v2.5-pro.md`
+- Mino 不可用 → 兜底 Kimi K3 → 模型 `opencode-go/kimi-k3`，报告文件名 `report2-kimi-k3.md`
+- 兄弟指定其他模型 → 按兄弟说的写
 
 **poll 等待完成** → 确认报告2已生成。
 
@@ -124,7 +118,7 @@ description: "三阶段方案审核：Kimi K3 → GLM-5.2 Max → DeepSeek Pro M
 
 1. 读报告2摘要（前 3-5 行 + 各维度评分 + 主要问题列表）
 2. 向兄弟汇报：
-   - ✅ 第1轮审核完成（选定的模型：Kimi K3 / GPT-5.6 Sol Xhigh）
+   - ✅ 第1轮审核完成（选定的模型：Mino-v2.5-pro）
    - 各维度评分概览
    - 主要发现的问题/风险（摘要）
    - 报告2路径
@@ -182,9 +176,9 @@ description: "三阶段方案审核：Kimi K3 → GLM-5.2 Max → DeepSeek Pro M
 3. **桌面通知**：`msg * "兄弟，方案审核第2轮（GLM-5.2 Max）完成了，看看结果？"`
 4. **等兄弟说「继续」再走 Step 3**
 
-### Step 3: 第3轮 — DeepSeek Pro Max 最终裁决
+### Step 3: 第3轮 — 火山 Pro 最终裁决
 
-兄弟确认后，调度 OpenCode Pro Max 审核原始报告 + 报告2 + 报告3，出最终报告。
+兄弟确认后，调度 OpenCode Pro 审核原始报告 + 报告2 + 报告3，出最终报告。**Pro 优先用火山 pro（`volcark/deepseek-v4-pro-ga-260813`）**；火山不可用时按 opencode-schedule Pro 优先级链：次选 `xiaomi-token-plan/mimo-v2.5-pro`，兜底 `opencode-go/deepseek-v4-pro`。
 
 **brief 内容（在 Step 2 基础上增加）：**
 ```markdown
@@ -196,7 +190,7 @@ description: "三阶段方案审核：Kimi K3 → GLM-5.2 Max → DeepSeek Pro M
 
 ### 已有审核报告
 同时审阅前两轮审核报告：
-1. 第1轮（选定的模型 — Kimi K3 / GPT-5.6 Sol Xhigh）：`<report2路径>`
+1. 第1轮（选定的模型 — Mino-v2.5-pro）：`<report2路径>`
 2. 第2轮（GLM-5.2 Max）：`<report3路径>`
 3. 原始方案/报告：<路径>
 
@@ -228,7 +222,7 @@ description: "三阶段方案审核：Kimi K3 → GLM-5.2 Max → DeepSeek Pro M
 （同上）
 ```
 
-**调度方式：** 按 `skills/opencode-schedule/SKILL.md` 标准流程执行，模型 `opencode-go/deepseek-v4-pro --variant max`。（⚠️ Pro max 本机 exec 环境有 LLM 静默失败风险——2026-08-10 定稿；若发生：按 opencode-schedule 续跑 `-m` 原模型规则唤醒，仍不活再 stop）
+**调度方式：** 按 `skills/opencode-schedule/SKILL.md` 标准流程执行，模型 `volcark/deepseek-v4-pro-ga-260813`（火山 Pro）。若火山 pro 不可用 → 次选 `xiaomi-token-plan/mimo-v2.5-pro` → 兜底 `opencode-go/deepseek-v4-pro`（⚠️ opencode-go Pro 仅兜底，从不首选）。
 
 **poll 等待完成** → 确认最终报告已生成。
 
@@ -237,7 +231,7 @@ description: "三阶段方案审核：Kimi K3 → GLM-5.2 Max → DeepSeek Pro M
 1. 读最终报告摘要（前 3-5 行 + 结论部分）
 2. 向兄弟汇报：
    - ✅ 三轮方案审核全部完成
-   - 参与模型：Kimi K3 / GLM-5.2 Max / DeepSeek Pro Max
+   - 参与模型：Mino-v2.5-pro / GLM-5.2 Max / 火山 Pro
    - 最终裁决结论：通过 / 有条件通过 / 不通过
    - P0 关键问题摘要
    - 最终报告路径

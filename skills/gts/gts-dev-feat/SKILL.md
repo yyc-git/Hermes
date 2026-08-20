@@ -706,18 +706,35 @@ M-3 阶段发现 bug 时按上述规则处理（宣布→等确认→dispatch）
 
 ---
 
-## R 组：技能反思（gts-skill-reflect）
+## R 组：技能反思（gts-skill-reflect）—— 🔴 必须 bot 做，禁用 OpenCode (2026-08-20 兄弟拍板)
 
-> CLEANUP 完成后、保存之前，调用 **gts-skill-reflect** skill 执行技能反思：
-> 读取 issue pitfalls + 记忆检索 + 对话补充 → 生成改进建议 → **等兄弟确认** → skill_workshop 执行。
-> 无异常时走快速路径（自动进保存，不打断兄弟）。
+> **🔴 R/S 必须由 bot 做,不能派 OpenCode**(兄弟原话「R/S 应该由你来做,而不是 OpenCode」)——R 反思需**访问 bot 记忆主表**(MEMORY.md / ARCHIVE.md),只有 bot 能做;OpenCode **不可见** bot 记忆,派它写反思会失去记忆关联导致下次同类问题重演。**S(保存)** 由 bot 做(整合记忆/skill 落地)或派 OpenCode 只做 commit + push(纯机械操作,无记忆依赖)。
+>
+> OpenCode 可做:写反思 .md 草稿到 `.tmp/` + git commit docs/ 目录;**禁做**:落地 skill patch、更新 memory、整合当日教训。
+
+> CLEANUP 完成后、保存之前，bot 主线执行技能反思：
+> 1. 读 phase-c-verification.md + issue pitfalls + 当日 daily log
+> 2. 🔍 整合 bot 记忆主表相关条目(对照同类教训)
+> 3. **关联到对应 skill / memory**(patch skill 文件 / update memory)
+> 4. 生成反思报告 → 兄弟原话确认 → 自动进保存
+
+**🔴 配套 R/S 操作硬规**(2026-08-20 实锤):
+
+1. **反思报告必须含** 5 段: ①过程总结 ②教训(每条带具体文件:行号 + 实测命令)③记忆/skill 落地条目清单 ④spec 同步状态 ⑤修复完整度评估 + 待 push 状态
+2. **patch skill 前**用 `skill_view` 验证 skill 内容完整 + 不引入 lint 错误
+3. **patch skill 后**用 `ls -la .hermes-home/skills/gts/<skill>/` 确认文件落地
+4. **不擅自动 OpenCode**(dispatch 排程会打断兄弟浏览 dev server / 浪费 token)
+5. **R 完成 = 兄弟拍板 S**(commit + push);**全自动模式下 R + S 都由 bot 做**(记忆/skill 落地必须 bot;commit/push 是机械动作可派 OpenCode 但非必须)
+6. **commit 前必看 git status + 核对 staged 文件清单**,避免漏文件 / 多文件
+8. **commit message 用中文**
+9. **push 时机 = 兄弟拍板**(`git checkout` / `git reset` 兄弟不拍不能动);**S 派 OpenCode 也仅在兄弟说"全自动 push"才 push**
 
 ```
-🔮 技能反思 → 调用 gts-skill-reflect
-  ├─ 有改进建议 → 展示报告 → 等兄弟确认 → 走 skill_workshop
+🔮 技能反思 → bot 主线执行(读记忆/skill → 关联落地)
+  ├─ 有改进建议 → patch skill / update memory → 兄弟原话确认
   └─ 无改进建议 → 自动继续
   ↓
-保存（gts-submit-save，最后一步）→ 双通道通知 → 🎉 工作流完成
+保存（gts-submit-save，bot 或 OpenCode 仅 commit/push）→ 双通道通知 → 🎉 工作流完成
 ```
 
 > 🔴 **保存必须在反思之后**：gts-submit-save 是工作流最后一步（通知之前），确保反思产出的 skill 更新/修复/报告能一起被提交，不会分两批。

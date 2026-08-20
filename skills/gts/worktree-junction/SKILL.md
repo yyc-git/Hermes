@@ -91,6 +91,7 @@ $conn = Get-NetTCPConnection -LocalPort 7093 -State Listen -ErrorAction Silently
 
 ## 坑清单(全部实测,建 worktree 前必读)
 
+0. **🔴 junction 必须在 worktree 完全初始化后才能创建（2026-08-20 实锤）**：如果 worktree `git worktree add` 还在 Updating files 阶段（超时被杀），此时创建 junction → worktree 内文件全部丢失（junction 覆盖了正在 checkout 的目录）。**正确顺序**：① `git worktree add` 完成（`Test-Path` 确认关键文件存在）② 再创建 junction。**反面教材**：worktree-junction.ps1 超时后立即创建 junction → Camera.ts 等 14664 文件全部删除，需要 `git checkout HEAD -- .` 恢复。
 1. **`git worktree add` 前台必超时被杀**(14356 文件 3-4min)→ 脚本内用 `Start-Process -Wait` 同步等待(不能用轮询 HasExited,见下)
 2. **被杀后留 git 锁**:`.git/worktrees/<name>/index.lock` → 手动删;worktree 的 git 元数据在 `.git/worktrees/<名>`(**目录名不是分支名**,如 add -b test-junction 建到 wt-test 目录则路径是 worktrees/GTS-Play-wt-test)
 3. **删残留目录前先删 junction**:`Remove-Item <wt>\node_modules`(junction)再 `git worktree remove`,否则 Permission denied
@@ -197,12 +198,38 @@ git worktree list
 3. 如果 worktree 里有 node_modules junction → `Remove-Item <wt>\node_modules` 先删 junction（Windows 文件系统对跨盘 junction 的删除有怪行为），再 `git worktree remove`
 4. `git branch -D`（大写 D）强制删未合并分支；`-d`（小写）会拒绝，所以**必须 -D**
 5. 兄弟硬偏好：**cleanup 是 merge 完成的判定标准**，不是可选项。merge 完成 → cleanup 完成 → 才算任务落地。
+6. **🔴 残留目录 PowerShell + cmd 都报「目录不是空的」的 fallback(2026-08-20 实测)**:wt 内部嵌套 junction 残留 Repair Point / Windows FS 锁,PowerShell `Remove-Item -Recurse -Force` 失败,`cmd /c rmdir /s /q` 也失败。**解法**:先 `git worktree prune` 清 git 锁 → 重试 `cmd /c rmdir /s /q` → 还失败:`Get-Process node/chrome | Where-Object { $_.CommandLine -match "<wt-name>" } | Stop-Process -Force` 杀掉占用进程 → 重试。**关键**:Test-Path False 才算彻底删。**反面教材**:我曾误删 8-18 兄弟的 `hermes-verify-precommit.ps1`(以为是临时脚本)→ 删除前用 `LastWriteTime` 过滤今天创建的文件才安全。
 
 ### 前置检查（merge 前）
 - 🔴 dev 工作区未提交变更**不涉及** merge 路径 → git 允许 merge（`git status --porcelain | Select-String <路径>` 无输出）
 - dev 工作区有他人未提交变更时**禁止 stash/commit**（opencode-schedule 纪律）——只要不涉及 merge 路径可直接 merge
 - wt 分支基于旧 dev 时：merge-base == wt HEAD 说明 wt 是 dev 后代，三方合并只应用 wt 的新 commit，不会带回旧代码
 - 冲突 → 手工解后 `git commit`（仅当 dev 前进期间同文件被改）
+
+### 🔴🔴 dev 有同文件未提交改动时的 stash-merge-pop 流程（2026-08-20 实锤）
+
+> 当 dev 工作区**恰好有与 worktree 改动相同的文件**未提交时，`git merge wt1` 会报 `Your local changes would be overwritten`。不能 stash 别人的改动（opencode-schedule 纪律），但这里的改动是**自己的旧版本**（worktree 基于 dev 建的，dev 之后又改了同文件）。
+
+```powershell
+# 1. stash 只涉及 merge 路径的文件（精确路径，不 stash 全局）
+cd D:\Github\GTS-Play
+git stash push -m "temp merge stash" -- <wt改动的文件路径列表>
+
+# 2. merge
+git merge wt1
+
+# 3. pop stash
+git stash pop
+
+# 4. 冲突时取 merge 版本（worktree 的新代码 = 正确版本）
+git checkout --theirs <冲突文件>
+git add <冲突文件>
+git stash drop
+```
+
+**关键判据**：worktree 的改动是本次 fix 的正确版本，dev 的旧改动是过时的。冲突时 `--theirs` = worktree 版本 = 正确。**不要** `--ours`（那是 dev 的旧版本）。
+
+**反面教材**：直接 `git merge wt1` 报错 → 不 stash 直接放弃 → 改动丢失。
 
 ## 从 worktree 启动 dev-server（2026-08-19 兄弟拍板）
 

@@ -22,7 +22,7 @@ token 成本敏感（Flash 级 + 合并 dispatch + 长任务拆 session）→ AR
 §
 恢复中断会话后必清旧 session（DB 三重验证）→ ARCHIVE「判 OpenCode session 活跃」
 §
-OpenCode 调度 + 模型优先级 8-20（火山→mimo→go / 免费→火山→go；go 仅兜底）→ ARCHIVE「opencode 模型落盘+免费组」+ 4 个 dispatch skill
+OpenCode 调度 + 模型优先级 8-20（火山→mimo→go / 免费→火山→go；go 仅兜底）→ ARCHIVE「opencode 模型落盘+免费组」+ 4 个 dispatch skill。🔴 小米 pro = mimo-v2.5-pro（token plan，OpenCode ID `xiaomi-token-plan/mimo-v2.5-pro`，M-I-M-O 非 mino，兄弟口语叫 Mino）。gts-plan-review 链 8-20 定：第1轮 mimo-v2.5-pro → Kimi K3 兜底 / 第2轮 GLM-5.2 Max 不变 / 第3轮 火山pro→小米pro→go pro
 §
 session 活跃判定（信 DB time_updated，勿用 Web UI）→ ARCHIVE「判 OpenCode session 活跃」
 §
@@ -54,21 +54,63 @@ hermes 读资料 vs OpenCode 加载链（hermes 直读 vs OpenCode skill allowli
 §
 opencode run argv 3 坑（positional / attach / --no-replay）→ ARCHIVE「opencode run argv 3 坑」+ skill gts-dispatch-preflight
 §
-wait-opencode-session.mjs 参数单位是 ms（maxWaitMs=5400000, stableMs=300000）→ ARCHIVE「wait-opencode-session.mjs patch 落地」
-§
 worktree merge 后必 remove（5 步流程）→ ARCHIVE「worktree merge 后必须 git worktree remove」+ skill gts-worktree-junction
 §
-兄弟说「demo」歧义（默认 PMXReduceFace demo，:8096）→ ARCHIVE「兄弟说 demo 歧义」
+🔴 **worktree 不问直接建+删(2026-08-20 兄弟拍板)**:dispatch 前没有可用 worktree → 直接建新,不问兄弟。用完即删。merge 回 dev 才进 M 阶段。
 §
-**关键新增锚点词**：opencode-dispatch、yargs拆参数、静默失败、wait-DONE核对、session活跃、免费组轮换、patch-lie-bug、编码哲学8条、GGUF模型、Bun-log锁、4098不热加载、skill改动重启、last-used-model覆盖、api_mode、覆盖率阈值40%、pmx-skip-5万、state.db、hermes-session-read、argv-3坑、wait-ms、worktree-remove、demo歧义、信源优先级
-§
-兄弟记忆压缩偏好 8-20 改：主表 = 一行结论 + ARCHIVE 指针；★ 也按此走。详细内容 → ARCHIVE + skill 指针
+关键锚点词:opencode-dispatch、静默失败、session活跃、免费组轮换、编码哲学8条、4098不热加载、api_mode、覆盖率阈40%、pmx-skip-5万、state.db、argv-3坑、worktree-remove
 §
 兄弟记忆纪律自检：每轮结束查主表字符数；> 5600/8000 = 70% → 主动走 gts-memory-compress；> 6400/8000 = 80% → 必须压
 §
-🔴 派工后通知精简(2026-08-20 兄弟拍板):**派工后不主动通知"在跑"**。轮询机制(2026-08-20 修正):**主动 `process(action=log, session_id=wait_id, limit=2)` 间隔 60s**(全自动模式 120s)看 wait stdout — 这是**纯工具调用不走 LLM,token = 0**(跟 OpenClaw 老 poll 每轮 2 亿+ 完全不同,OpenClaw poll 触发 bot 整轮对话+全量 cacheRead,Hermes `process(action=log)` 只读 process buffer);看到 `DONE: step-finish reason=stop` → 立刻整轮回复烧 ~1000 token → 停止轮询;看到还在跑 → 静默等下次轮询。**只在三种情况主动通知兄弟**:① 任务完成 / git commit 落地(读 log + 报告);② agent 红灯 / 卡死 / 60+ 分钟无进展;③ 兄弟主动问时。**绝对不**说"已 dispatch,sessionId=X,模型=Y,请稍等"之类开场白。
+胖 skill 拆分(2026-08-20):opencode-schedule 110KB → 主入口 27KB + 4 reference。playbook 落 `gts-skill-refactor-split`。原则:保守>激进;现在拆;name 不改;按职能切。
 §
+🔴 **通知纪律(2026-08-20)**:派工后零通知。只在①完成/git commit ②红灯/卡死/60+min ③兄弟主动问时通知。**chat 等你 ≠ notify.ps1**:触达决策必须 notify.ps1 弹窗(兄弟拍桌实锤)。
 §
-胖 skill 拆分(2026-08-20):opencode-schedule 110KB → 主入口 27KB + 4 reference(avg 12KB);name 保持兼容 33 个引用方;bot load 减 76%。playbook 落 `gts-skill-refactor-split`(三层结构 + 7 步流程 + 验证 3 件套 + split-record-template + verify-split.mjs)。
-**关键决策原则(兄弟拍)**:① 保守(影响面小)优于激进;② 现在拆(不等手上活);③ name 绝不改;④ reference 按「职能」切不要按「章节」切;⑤ 主入口 > 30KB 仍偏胖要 2 级 reference。下次再有 >30KB skill → 直接套。
-**opencode-schedule 4 reference 列表**(按场景 load 别全读):brief-template.md(写 brief 前必)/ dispatch-checklist.md(Step 0/0.5/0.6/0.7 + stale + Aborted + socket 崩溃)/ session-lifecycle.md(2.5 追加 + 2.6 续接 + permission 卡 + post-poll state)/ monitoring-wait.md(wait 主路径 + 4 退出码 + LLM 静默 + poll 降级)。**主 skill 只看**:模型时段铁规 + Hermes 适配 + 调度流程 + 必带参数 checklist + 5️⃣ 硬性规则。
+revive-all(2026-08-20):`node scripts/opencode-free-model-state.mjs revive-all --dir D:\Github\GTS-Play`。幂等可重入。改 TTL ≠ 立即清空(两独立动作)。
+§
+🔴 wait stableMs 必须 ≥ 15 分钟 + R/S 必须 bot 做(2026-08-20 实锤):① PMXReduceFace step2 BDD 40+reduce+verify 全跑 12-15 分钟,gts-auto 默认 120000 实测**2 次**误判 idle(`tool-calls` 还在跑);正确 900000-1200000(15-20 分钟);wait 退出后必查 part `step-finish reason`,`tool-calls`/`running`/无 `stop` = 立刻发「继续」(读 meta),**不**重 dispatch。② **gts-dev-fix Phase R/S 必须 bot 做**(兄弟原话「R/S 应该由你来做,而不是 OpenCode」)——R 反思需访问记忆主表,只有 bot 能做;OpenCode 只写 .md + commit docs。**gts-auto §7.2 步进循环 R/S 步骤禁用 OpenCode dispatch**,改用 bot 主线:读 phase-c-verification → 整合记忆/skill 落地 → commit。详见 ARCHIVE「wait stableMs + R/S 教训」。
+§
+🔴🔴🔴 **dispatch 前模型选择三步走(2026-08-20 一天犯 2 次,兄弟拍桌)**:①算北京时间(9-12/14-18=免费窗口)②`node scripts/opencode-free-model-state.mjs get` 拿 current ③免费→Flash=current;非免费→volcark flash;Pro=火山pro→小米pro→go pro。**禁止凭记忆选模型,每次都必须走三步**。兄弟原话「火山模型都挂了啊！你怎么不吸取教训」「flash场景不是优先用免费组吗？」
+§
+**ad-hoc verify(8-20)**: write_file 后必 verify→清理 temp 脚本(Test-Path=False)。禁止漏清理/清理错脚本
+§
+**ok=默认A(8-20)**: 多选项兄弟回"ok"→默认选A。歧义时notify确认
+§
+🔴 **最近配置/provider 类查询的源优先级(2026-08-20 实锤)**:用户说「前几天才配了 X / 刚刚接入 Y / opencode 跑通了 Z」类关键词(token plan / provider / modelID / 接入 / MiMo / xiaomi / 火山)→ **state.db sessions 表是第一步**(LIKE 标题:「接入」「配」「Mimo」秒级命中),不是 MEMORY.md/ARCHIVE.md。配置接入类改动**几乎不会写主表**,只在会话标题和消息里。复盘根因:我先 grep 笔记/skill 文件,被兄弟拍桌纠正「搜索下这3天的记忆(包括会话记忆)啊」。已落 gts-memory-search-v3 §11 强约束。
+§
+🔴 **OpenCode server 卡死恢复(2026-08-20)**:①DB time_updated 是唯一 ground truth ②不要杀残留 session,优先重启 server + 对挂 session 发「继续」③不要给没问题的模型加 blacklist(全局停摆≠model 挂)。进程名=`opencode.exe`(非node.exe)。PowerShell $_ 转义坑→用脚本文件。bot 不擅自 commit。
+§
+不完整修复传播(8-20):brief 必须强制调用入口同步参数+持久化数据重新生成。mmd_tool 材质识别禁止硬编码关键词,应扫描 PMX 骨骼权重动态识别。
+§
+模型 fallback 铁规(2026-08-20):场景决定模型等级→等级内按优先级 fallback,不能跨等级降级。Pro=小米pro→go pro;Flash=火山flash→go flash。
+§
+PMX 骨骼权重扫描技术（替代硬编码关键词）→ skill mmd-pmx-bone-weight-scan。触发:需要根据骨骼关系判断材质类别时。探测脚本: packages/mmd_tool/scripts-explain/__explore_scan.mjs。
+§
+🔴 PMXReduceFace 质量铁律(2026-08-20 兄弟拍板):空洞(任何材质内部/边界)和多余三角面绝对不允许。宁可不减面都不能引入视觉缺陷。验证工具(newHoleEdges/findHoleChains)有盲区——只检测闭合环+边界边差异,材质内部单点空洞漏检。修复前必须先修验证工具。
+§
+🔴 gts-dev-fix INIT 铁律(2026-08-20):skill 触发后**第一条命令必须是 INIT**(skill-exec-manager.cjs init),禁止「先看看代码方向再补 INIT」。兄弟原话「issue都不开启吗？」。sid/wid 获取和 init 分两条命令用 `;` 连接,不能用 `&&`(PowerShell 7 报错)。
+§
+**fix skill 实战纪律（2026-08-20 实锤，5 条）**：① INIT 是第一步，skill 触发后第一时间 `skill-exec-manager.cjs init`，不跳过不问；② dispatch 前**必须** load opencode-schedule skill 并按其流程走，不自行写 dispatch 命令；③ 改 frontend/ 默认走 worktree，直接建不问兄弟；④ dispatch 前先验证模型可用性（`opencode run "echo ok" -m <model>`），火山挂了用小米 pro；⑤ junction 必须在 worktree 完全初始化后（`Test-Path` 确认关键文件存在）再创建，否则文件全丢。
+§
+flash-free echo-only 实锤(8-20):连续3轮只复读 brief 不动手。检测:`SELECT type,count(*) FROM part WHERE session_id='<sid>' GROUP BY type` 全 text=复读。server 重启后/模型切换后/inline 传参易触发。重试或换模型。已落 skill opencode-echo-only-detection。
+§
+🔴 **单机版 fix 不走 E2E + 不做根因分析(2026-08-20 兄弟拍板)**：直接跳 Phase 0 进 Phase B。isHideUI=true 是全局开关（所有UI不显示）,部分UI消失→问题在个别组件 Redux 状态。
+§
+🔴 **OpenCode server 启动 + 模型 API Key 失效(2026-08-20)**：① `opencode serve --port 4098`（不是 `opencode server`，会被解析成目录）② 小米 pro API Key 失效→ same blacklist 流程 dead+get+重 dispatch
+§
+PMXReduceFace 验证工具盲区(2026-08-20 实锤):verify.mjs/newHoleEdges/findHoleChains 只检查拓扑(边/面数量关系)不检查几何(补面位置是否正确)。BDD 测试也只验证算法行为不验证视觉输出。结果: agent 报告 40/40 BDD 全绿 + noNewHoles=true,但用户肉眼仍见空洞。教训: agent 自报「通过」不可信,必须实测验证(§7.4.1 已有)。修复必须在算法层(collapseCreatesHole)而非检测层。
+§
+🔴 **worktree 强制建+删(2026-08-20)**:同上方 worktree 不问直接建条目。
+§
+🔴 **fix 任务默认用 Pro 不用 Flash(2026-08-20 兄弟纠正)**:兄弟原话「你不是要用pro吗？pro不用免费模型。除非是flash场景」。fix 任务(跨包/改类型签名)→ Pro;Flash 仅用于纯配置/文档/极简单文件改动。dispatch 前必须走 opencode-schedule 模型选择流程。
+§
+§ **gts-dev-fix Phase 0 待更新(2026-08-20)**：skill 是用户创建的无法自动 patch。需手动改 Phase 0 段落：单机(frontend/)跳过 E2E。当前 skill 写的「不默认跳过」已过期。
+§ **fix 任务模型选择(2026-08-20)**:fix 默认用 Pro（火山pro→小米pro→go pro），不用 Flash。兄弟原话「你不是要用pro吗？pro不用免费模型」。Flash 仅纯配置/文档/极简单文件改动。
+§
+🔴 dispatch 后双监控(2026-08-20):① wait 脚本(主,完成/超时通知)② session-watchdog.mjs(异常检测,60s轮询,0 LLM token,关键词匹配额度耗尽/rate limit/静默失败,命中→退出码1→LLM分析+dead+重派)。禁止 dispatch 后不管或反复 poll。已落 opencode-schedule 两个 reference。
+§
+🔴 **fix skill INIT 必须是第一条命令(2026-08-20 实锤)**:兄弟原话「issue都不开启吗？怎么没走fix skill」——skill-exec-manager.cjs init 是状态追踪入口,跳过=无追踪=流程失控。禁止「先看看代码方向再补 INIT」。已在 gts-dev-fix skill INIT 段落标注,但因 skill 受保护无法 patch,bot 自身必须记住。
+§
+🔴 **worktree 每次建新+用完即删,不该问兄弟(2026-08-20 兄弟纠正)**:兄弟原话「不是每次都建新的吗,用完即删除吗？要记住啊」——opencode-schedule 已有 worktree 规则,但 bot 仍在问「是否建新 worktree」,属于没执行已有规则。
+§
+session-watchdog.mjs: 轻量异常检测脚本(60s轮询DB part表,0 LLM token)。退出码:0=完成,1=异常需LLM,2=超用。位于 scripts/session-watchdog.mjs + opencode-hermes-dispatch-pitfalls/references/。与 wait-opencode-session.mjs 配合双监控。

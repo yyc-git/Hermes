@@ -102,6 +102,47 @@ description: "派工前根因验证 + 反向断言清单。bot 在写 brief 派 
 - 兄弟说"为什么 X 改了/没改"时 → 必须走本 checklist
 - 兄弟说"X 应该 Y"(期望式) → 必须先 grep 实查,不走"启服务测 Y"快速路径(模式 F)
 
+### 派工后通知等待 vs 主动轮询(2026-08-20 兄弟拍板)
+
+派工后的"等待策略" 4 选 1:
+
+| 场景 | 正确做法 | token 成本 | 兄弟拍板原话 |
+|------|---------|----------|------------|
+| Hermes 通知可信 | **不轮询**,等 `notify_on_complete` 自动唤醒 → `process(action=log, offset=-2)` 读最后输出 + `git log -3` 看 commit → 整轮回复 | 0 token(只读 + 一次性回复) | 「不需要告诉我」 |
+| 通知丢失/不可靠 | `process(action=log, session_id=<wait_id>, limit=2)` 看 wait stdout | **0 token/token调用**(纯工具) | 「间隔 60s」|
+| Pro non-max 静默 20+ 分钟 | 仍不轮询,等通知到达一次性查 DB part 表 | 0 token | 「不需要告诉我」 |
+| 全自动模式 | 同上,轮询间隔 120s | 0 token | 「全自动 120s」 |
+
+**核心**:OpenCode 派工后 bot 主线**不主动通知「在跑」**(兄弟原话「不需要告诉我」);`process(action=log)` 工具调用是 token=0,**不是**等误 OpenClaw 老 poll 每轮触发整轮对话烧 2 亿 token 的场景。
+
+**记忆点**:派工 → 拿 sessionId → 落盘 meta → 启 wait 脚本(`maxWaitMs=5400000`/`stableMs=300000`)→ turn 结束,**等 Hermes 通知**。通知到达后**一次性**读 + 验收。**不轮询,不通知"在跑"**。
+
+#### 🔴 wait `stableMs` 必须 ≥ 600000 全自动模式,300000 普通模式(2026-08-20 实锤)
+
+**根因**:gts-auto 默认 `idleTimeoutSec=120`(2min) 在 BDD/单测场景下严重不够。PMXReduceFace `yarn test:bdd --runInBand` 跑 35+ BDD 实测 5+ 分钟,期间 agent 调 `npx jest ...` 跑命令间隙无 part 更新,wait 误判 idle 触达退出 → agent 实际 `step-finish reason=tool-calls` 还在跑。
+
+**两次踩坑(2026-08-20 实测)**:stableMs=120000(gts-auto 默认)误判 → 改 300000 仍误判 → 改 900000(15min)最终正确等到完成。
+
+**wait 退出后,先查 part 表 `step-finish reason` 字段再决定下一步**(避免误判导致重 dispatch 或发「继续」):
+
+```powershell
+opencode db "SELECT substr(CAST(data AS TEXT),1,300) FROM part WHERE session_id='<sid>' ORDER BY time_updated DESC LIMIT 1" --format json
+```
+
+| part 最后 step-finish reason | 结论 | 下一步 |
+|---|---|---|
+| `stop` / `completed` | ✅ 真完成 | 收产物汇报 |
+| `tool-calls` / `running` | agent 还在调用工具,wait 误判 | 发「继续」唤醒(读 meta 拿原 `-m`),**不要**进下一阶段 |
+| `unknown` + tokens 0 + cost 0 | 🔴 LLM 静默失败 | 走静默失败 SOP(见 gts-opencode-session-ops 或本 skill 主表) |
+
+**🔴 硬性派工 brief 模板补充**:派工时 wait 参数必须按场景选,不要凭记忆默认:
+
+| 场景 | `maxWaitMs` | `stableMs` | 理由 |
+|---|---|---|---|
+| 全自动 + BDD/单测 | 3600000-5400000 (60-90 min) | **600000-900000 (10-15 min)** | jest 跑 5+ 分钟正常,工具调用间隙无输出 |
+| 普通模式 + 轻量任务 | 1800000-3600000 (30-60 min) | 300000 (5 min) | Flash 完成通常 < 2 min |
+| Pro/Max 报告阶段 | 7200000-14400000 (2-4 h) | 4800000 (80 min) | 模型内部思考+报告生成长 |
+
 ## 🔴 跨 git 仓派工（独立仓库，2026-08-19 PMXReduceFace 实测教训）
 
 > **本节是 gts-dispatch-preflight 的特例扩展**：当派工目标是**独立 git 仓**（不在 wt1/worktree 内、是独立 repo，如 `D:\Github\PMXReduceFace` / `D:\Github\VibeCodingBook`），workdir 切换到外部仓时，**agent 默认倾向去 wt1/GTS-Play 主仓找上下文**（AGENTS.md / 项目规则 / 关联代码），全部被外部权限弹窗拒 → 卡死。
@@ -445,6 +486,63 @@ const args = [
 //   Pro:   volcark/deepseek-v4-pro-ga-260813 → mimo-v2.5-pro → opencode-go/deepseek-v4-pro (兜底)
 //   Flash: opencode/<free组: flash-free→hy3-free→mimo→nemotron-3-ultra→nemotron-3.5-lightning→laguna-s-2.1> → volcark/...-flash → opencode-go/deepseek-v4-flash (兜底)
 // opencode-go /* 是兜底,从不首选
+
+// 派工前必读 free-model-state(2026-08-20 实测):
+//   免费时段必须先 `node scripts/opencode-free-model-state.mjs get --dir D:\Github\GTS-Play`
+//   用 `current` 值(跳过 blacklist),不要凭记忆/现场测试猜模型
+//   Flash 重派同 free 模型挂掉时 → volcark 兜底,详见 opencode-llm-failure-recovery 「静默挂掉重派默认 volcark 兜底」节
 ```
 
 **记忆点**:dispatch 失败 = 90% 是 argv 坑。先看 CLI 错误第一行(message / URL / command),对照上表 3 条命中其一 → 修 spawn argv,**不要猜测 server 逻辑**。
+
+## 🔴 派工后「立刻」纪律(2026-08-20 XiaHui 4-session 实测)
+
+> 派工命令发出 ≠ 派工完成。**派工 → 拿 sid → 落盘 session-meta → 起 wait 脚本**,这 4 步必须**在同一次 LLM 回合内**完成,中间不许插任何"我先分析下"等其他输出。
+
+### 4 步必带检查表(每派一个 session 必走)
+
+| 顺序 | 动作 | 严格度 |
+|------|------|--------|
+| 1 | `opencode run ...`(background=true)派工 | 🔴 |
+| 2 | **立刻**(同一 turn)`opencode db` 查新 sessionId → 写 `.opencode-session-meta/<sid>.json`(providerID/modelID/briefPath/step/note) | 🔴 必须同 turn |
+| 3 | **立刻**(同一 turn)`node scripts/wait-opencode-session.mjs <sid> 5400000 300000 --exit-on-stuck`(background=true, notify_on_complete=true) | 🔴 必须同 turn |
+| 4 | turn 结束等 Hermes 通知 | ✅ |
+
+### 反面教材(2026-08-20 XiaHui 4-session 实测)
+
+我派了 4 个 OpenCode session(A/B/C/D)处理 XiaHui mmd_tool 修复,但**派完只起了 1 个 wait 脚本**就回兄弟报告——结果:
+- A v1 静默挂掉(session 建好 30s 后 tokens.total=0、无 finish 事件)→ 5 分钟后才被 wait 脚本通知(因为只有 A 起了 wait)
+- 兄弟拍桌质问「你怎么没检查?」(**opencode-schedule 5️⃣ 兄弟原话**,本次重新踩了一遍)
+- B/C/D 三个 session 在我"回兄弟"那 1 分钟内**完全没被监控**——任何挂掉我都看不到
+
+### 为什么"立刻"
+
+- wait 脚本 30s 一个 poll 周期,session 静默挂掉的窗口最长 30s
+- 晚启 wait 5 分钟 = 多烧 5 分钟盲等 + 兄弟拍桌
+- 派工同 turn 落盘 meta + 起 wait = **零额外 token 成本**(都是同步工具调用),不浪费 LLM 决策轮
+
+### session-meta JSON 必填字段
+
+```json
+{
+  "sessionId": "ses_xxx",
+  "title": "xiahui-fix-xxx",
+  "task": "<一句话任务摘要>",
+  "providerID": "opencode | volcark | xiaomi-token-plan",
+  "modelID": "deepseek-v4-flash-free | deepseek-v4-pro-ga-260813 | ...",
+  "variant": "default",
+  "startedAt": "<UTC ISO>",
+  "briefPath": ".opencode-brief-xxx.md",
+  "issuePath": "笔记/项目文档/issue/<date>-<skill>-<hash>.md",
+  "step": "B1 | B2 | C | ...",
+  "note": "<可选: 重派原因 / 兄弟特别偏好 / 特别约束>"
+}
+```
+
+**`note` 字段重派时必填**(2026-08-20 实测):例如 `note: "A v1 (opencode/deepseek-v4-flash-free) 静默挂掉,改 volcark flash 重派"` 留下完整因果链,后续 review / Phase C 验收时可以追溯。
+
+### 多个 session 并行时
+
+- 每个 session **独立 dispatch 命令 + 独立 meta + 独立 wait**(都 background=true)
+- 同 turn 内多次 `terminal(background=true)` 调用 = Hermes 同步并行启动,零额外 token
+- **不要**「派 A → 等 A 完成 → 派 B → ...」(串行浪费)也**不要**「派 A → 回兄弟报告 → 派 B → ...」(漏起 wait)

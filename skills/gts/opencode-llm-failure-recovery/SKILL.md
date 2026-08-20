@@ -53,7 +53,7 @@ description: "OpenCode LLM 调用失败检测与恢复协议：付费/免费模�
 | 信号（part 表） | 含义 | 处理 |
 |------|------|------|
 | 只有 1 条 brief 回显 + 无任何后续事件（无 step-start/reasoning/tool/error） | **server/attach 问题**，agent 从没被拉起 | 修 server（见下），**不要换模型** |
-| 有显式错误输出 `Free usage exceeded, subscribe to Go` / `Insufficient balance` / `rate limit` / `429` / `401` / `5xx` | 模型额度/瞬时故障 | 额度用完→dead+切下一个；瞬时→「继续」重试 |
+| 有显式错误输出 `Free usage exceeded, subscribe to Go` / `You have exceeded the 5-hour usage quota` / `Insufficient balance` / `rate limit` / `429` / `401` / `5xx` | 模型额度/瞬时故障 | 额度用完→dead+切下一个；瞬时→「继续」重试 |
 | step-finish reason=stop | 真完成 | 收产物 |
 | step-finish reason=unknown + idle>60s | LLM 静默失败 | 走上文分类 SOP |
 
@@ -84,6 +84,63 @@ Get-NetTCPConnection -LocalPort 4098 -ErrorAction SilentlyContinue | Select-Obje
 
 ## 恢复操作
 
+### 🆕 静默挂掉重派默认 volcark 兜底(2026-08-20 XiaHui A v1 实测)
+
+> 案例：A v1 派 `opencode/deepseek-v4-flash-free` → session 建好但 agent 进程 30 秒后死，DB 中 `tokens.total=0`、无 step-finish 事件。同模型其他 3 个 session（B/C/D）还活着 → 模型本身 OK，是这个 session 自己的问题。按下方"删会话直接重开"原则，但**重开用什么模型？**
+
+**规则**：
+1. **默认 volcark flash 兜底**（`volcark/deepseek-v4-flash-ga-260731`）—— 而不是同 free 模型
+2. 理由：
+   - 同 free 模型再开一次仍可能因同一底层原因再死（agent 启动后的某个环境耦合）
+   - volcark flash 走的是火山 API 通道，与 free provider 完全独立，不共享 session 启动路径
+   - 实测 A v2（volcark flash）跑通无问题
+3. **session-meta 落盘时加 `note` 字段记录重派原因**（"A v1 静默挂掉，改 volcark flash 重派"）便于追溯
+4. **若 volcark flash 也挂** → 走免费组内下一个（`opencode/hy3-free` → `opencode/mimo-v2.5-free` → ...），不要在 volcark 上反复试
+
+### 🆕 同 session/任务持续静默挂 ≠ 不同任务偶发（2026-08-20 兄弟拍板纠正）
+
+> 兄弟原话(2026-08-20)：「volcark flash 现在可以用啊！3次静默挂是指**如果它不能用后，你要隔断时间再试它2次啊**，而不是不同的任务或者不同的模型！」
+
+**教训**：本会话 bot 把"4 个并行 session 中 2 个用同 flash-free 静默挂 + 2 个活"判定为"flash-free 当日不可靠"，把 flash-free 加入 blacklist + 把 volcark flash 也判定为挂。**兄弟拍桌纠正：**
+
+- **静默挂判定标准 = 同 session / 同任务 / 同工作区持续出现 step-finish unknown + tokens=0 + 多次「继续」失败**
+- **不同任务 / 不同时间 / 不同 session 出现同样症状 ≠ 模型挂** —— 可能是 agent 任务进入死循环 / 工作区冲突 / 单次偶发，模型本身可继续用
+- **dead + blacklist 只用于模型实测确认不可用**（新 dispatch 小任务失败 + 明确报错：rate limit / 429 / Insufficient balance / 401 / 5xx）
+- **跨模型失败的"模式一致" ≠ 模型挂**：如 agent 从未启动（part 表只有 brief 回显）+ 同时换 3 个免费模型都卡死 → 是 server 问题（4098 占端口、OpenCode 没重启），**不要换模型**
+
+**修订**：
+| 旧规则 | 新规则 |
+|---|---|
+| "同批次 ≥2 次静默挂同 free 模型 → 立即 dead blacklist" | **同 session 持续失败 + 多次「继续」+ 模型实测不可用 → 才 dead blacklist** |
+| "同 free 模型在 4 session 中 2 挂 = blacklist" | 不可信。可能是 agent 任务死循环 / 工作区冲突，**单独 dispatch 小任务实测再判** |
+
+**判定流程**（更新版）：
+1. session 静默挂 → 先查 DB `time_updated` 判定真死还是假死（见下"false positive 教训"）
+2. 真死 → 发「继续」同 session 同模型 3 次（10s/30s/60s 间隔）
+3. 3 次「继续」都失败 + 报明确错误（rate limit / 429 / quota） → dead blacklist
+4. 报明确错误（401 / Insufficient balance） → dead blacklist（付费模型直接通知兄弟）
+5. 纯静默 unknown 但模型实测可用（新 dispatch 小任务跑通） → **不**进 blacklist，**删旧 session 重新 dispatch**
+
+### 🆕 DB `time_updated` 是 session 活跃唯一 ground truth（2026-08-20 实锤）
+
+**判定口诀**：
+```
+session.time_updated > (now - 600000)   → 活跃，不管 tokens/finish 长什么样
+session.time_updated < (now - 1800000)  → 死/挂，可以走 gts-opencode-stop
+last_message.tokens.total = 0            → 仅表示"这一条消息是空输出"，不等于 session 死
+last_message.finish = "tool-calls"      → agent 刚调完工具、还在循环处理，活跃
+last_message.finish = "stop"            → 真完成（step-finish stop）
+last_message.finish = "unknown"         → LLM 失败（按上文分类处置）
+```
+
+**反例（2026-08-20 bot 误判）**：
+- 看到 `tokens.total=0` + `finish=不存在` → 判"静默挂" → 错！这是被截断的中间状态
+- 应查 `SELECT datetime(time_updated/1000,'unixepoch') FROM session WHERE id='<sid>'` → time_updated 是真状态
+
+**wait 脚本 exit ≠ session 死**：
+- wait 脚本因 `idle ≥ stableMs` 退出（默认 300000ms）时，session 完全可能还在跑（agent 思考阶段正常静默）
+- 退出后必须查 DB time_updated，在涨 → 重新起 wait（idleTimeoutSec 调大）；不在涨 → 发「继续」或按上文分类
+
 ### 🆕 先分类再动作（2026-08-18 兄弟实测：flash-free 可用 → 老「继续3次→换模型」误判,已改）
 
 遇到 step-finish unknown / llm-fail 告警时,禁止直接套「继续 3 次」,先按下面三步定动作：
@@ -94,11 +151,11 @@ Get-NetTCPConnection -LocalPort 4098 -ErrorAction SilentlyContinue | Select-Obje
    - `401` / `timeout` / `5xx` / 网络类 → **瞬时故障** → 对同 session 发「继续」(同模型, `-m` 与原 dispatch 一致)
    - 纯静默 unknown、无明确错误码 → **优先怀疑会话异常/瞬时断流** → 实测模型可用性（新会话小任务跑通）→ 可用则**删会话重新 dispatch**,不用原地「继续」
 3. **换模型是最后手段**：仅在确认 rate limit 持续 / 模型实测不可用时才换组内下一个（flash-free → hy3-free → ...），不要因一次 unknown 就换
-4. 🔴🔴 **免费组必须按顺序逐个试完，不能跳过直接切火山付费（2026-08-19 兄弟纠正实锤）**：mimo-v2.5-free rate limit 卡死后，我跳过 nemotron-3.5-lightning-free 直接切 `volcark/deepseek-v4-flash-ga-260731`（付费），兄弟指正「Nemotron 3.5 Lightning Free 可以用啊，你没试吗?」。**规则**：免费组内**按顺序逐个试**（从 `get` 的 current 起，跳过 blacklist），rate limit/瞬时故障优先等待或换下一个免费模型，**免费组全部试完才允许切火山付费**。切付费前可 `set <试过可用的免费模型>` 落盘记录，避免下批又漏试。brother 实测可用的模型（如 nemotron-3.5-lightning-free）优先考虑。
+4. 🔴🔴 **模型组内必须按顺序逐个试，不能跳过（2026-08-19 兄弟纠正，2026-08-20 扩展至火山组）**：rate limit/瞬时故障优先等待或换组内下一个模型。**免费模型额度用完 → 免费组全部试完才允许切火山；火山模型额度用完 → 火山组内下一个 → 免费组 → go 兜底**。切付费前可 `set <试过可用的免费模型>` 落盘记录，避免下批又漏试。brother 实测可用的模型优先考虑。blacklist 机制统一管理：`dead` 命令自动判断 TTL（免费 18h / 火山 5h），`get` 自动跳过已挂模型。
 
 ### 发「继续」（不重新 dispatch，兄弟拍板）
 
-> 🔴 **确认「挂」后必须落盘免费模型状态文件（2026-08-18 兄弟拍板）**：确认某免费模型真挂（3 次继续失败 + 明确报错 rate limit/429/quota/401/5xx）→ 立即 `node scripts/opencode-free-model-state.mjs dead <model> --dir D:\Github\GTS-Play`（自动加入 blacklist，current 前进到组内下一个未挂的）→ 下次 dispatch 直接跳过，**不用现场试**。兄弟实测某模型恢复可用 → `revive <model>` 移出 blacklist、current 回到该模型。文件是权威状态：免费时段调度前先 `get` 读 current，不要凭记忆/现场测试猜模型。详见 opencode-schedule skill「免费模型状态文件化」节。
+> 🔴 **确认「挂」后必须落盘模型状态文件（2026-08-18 兄弟拍板，2026-08-20 扩展至火山组）**：确认某模型真挂（3 次继续失败 + 明确报错 rate limit/429/quota/401/5xx）→ 立即 `node scripts/opencode-free-model-state.mjs dead <model> --dir D:\\Github\\GTS-Play`（自动加入 blacklist，current 前进到组内下一个未挂的；**免费模型 TTL=18h，火山模型 TTL=5h**，到期自动恢复）→ 下次 dispatch 直接跳过，**不用现场试**。兄弟实测某模型恢复可用 → `revive <model>` 移出 blacklist、current 回到该模型。文件是权威状态：调度前先 `get` 读 current，不要凭记忆/现场测试猜模型。详见 opencode-schedule skill「模型故障轮换」节。
 
 ```js
 // 用 .mjs 脚本发（PS 5.1 读 UTF-8 无 BOM 中文乱码报 string terminator 错，两次实锤）
@@ -234,5 +291,55 @@ node scripts/diagnose-llm-fail.mjs          # 仅 server 健康（兄弟说"Open
 - ✅ 真要临时探针（如「兄弟给的新会话 sid 在 DB 查不到」单点确认），写成 1 个 .mjs（纯 node，无 PS / 无中文），ad-hoc verify 一次 PASS 即可，**别套 5 个验证点**
 
 何时自己写临时脚本（必须简短）：
-- diagnose-llm-fail.mjs 没覆盖的具体查询（如「B2-2c server DB 查询失败，先只看 DB 的 last 8 条 part」单点）→ 写 30 行内 .mjs
-- 不是排查 OpenCode 问题（如「volcark key 是否真的 HTTP 200」纯网络层）→ 已有脚本的 volcark key 实测段可直接复用，否则写单次 .mjs
+- diagnose-llm-fail.mjs 没覆盖的具体查询（如「兄弟给的新会话 sid 在 DB 查不到」单点确认），写 30 行内 .mjs
+- 不是排查 OpenCode 问题（如「volcark key 是否真的 HTTP 200」纯网络层），已有脚本的 volcark key 实测段可直接复用，否则写单次 .mjs
+
+## 🆕 Step N session 静默失败 → 重派 Step N+1 brief 必须预置已完成事实（2026-08-20 XiaHui fix 坑）
+
+> 案例：`ses_fe306c129ffeurtU5hLv797Hbp` 跑 Phase B Step 2（PMXReduceFace XiaHui LOD_70 洞 fix），在跑 BDD baseline 时 `step-finish reason=unknown + tokens 0` 静默失败。**前一个 session 已产出**：`笔记/项目文档/changes/2026-08-20-xiahui-LOD70-holes/solution.md`（Pro 写的根因+方案）+ `specs/pmx-face-reduce-xiahui-holes.feature`（Delta Specs）+ `.tmp/verify-guard-semantics.mjs`（探索脚本）。**重 dispatch 时必须**：
+
+1. **brief 显式列已落地文件路径**（让 agent 读，不必重新探索）—— 例：
+   ```
+   注意：前一个 session 在 .tmp/verify-guard-semantics.mjs 留下了探索脚本，可以参考但不要重复工作；
+   笔记/项目文档/changes/2026-08-20-xiahui-LOD70-holes/ 下有 Phase B Step 1 产出可直接用。
+   ```
+2. **保留 .tmp/ 中间文件**（不主动清理，让新 agent 参考）
+3. **meta 落盘 + 死 session 用 `opencode session delete` 同步清掉**（避免双 session 抢文件）
+4. **current 模型自动跳到下一个未挂的**（`scripts/opencode-free-model-state.mjs dead` 后 get 自动前进），dispatch 不必手动选下一个
+
+**避免**：
+- ❌ 重 dispatch 时 brief 不指明已落地文件 → 新 agent 重新跑 Step 1（浪费轮）
+- ❌ 留死 session 在 DB → time_updated 还在涨，bot 误以为还在工作
+- ❌ 手挑下一个模型（黑名单已 dead 后 current 自动跳，凭记忆选可能跳过可用）
+
+## 🆕 wait 脚本 stableMs 必须 ≥ 5 分钟（2026-08-20 实锤）
+
+> gts-auto 自动模式默认 `stableMs=120000`（2 分钟），但 PMXReduceFace 35+ 场景 BDD 实测跑 ~2-3 分钟 + Step C/D/E/F RED/GREEN 切换，单一阶段经常 > 2 分钟。`stableMs=120000` 会**误判 idle 触达退出**，但 agent 实际 `step-finish reason=tool-calls` 还在跑。
+
+**规则**：
+- **wait 脚本稳定时长 ≥ 300000 ms（5 分钟）**（gts-auto 默认 120000 太短需 patch）
+- wait 退出后必查 part 表 `step-finish reason`：
+  - `stop` / `completed` → 真完成，进下一步
+  - `tool-calls` / `running` / 无 `stop` → **agent 还活着，立刻发「继续」唤醒**（读 meta 拿原 -m），**不**重 dispatch，**不**进下一阶段
+  - `unknown` + tokens 0 + cost 0 → LLM 静默失败，按上文 dead + 切下一个免费模型
+- **`stableMs` 不要 ≥ 30 分钟**（Pro 生成阶段静默容忍 80 分钟只针对 max 变体；Flash/普通 Pro 静默 20+ 分钟就是卡死，stableMs 设过大就晚了）
+
+**误判示例**（2026-08-20 `ses_fe306c129ffeurtU5hLv797Hbp`）：wait exit `DONE: session idle >= 120s` → bot 误以为完成，查 DB 发现 `step-finish reason=tool-calls`（agent 在跑 BDD 测试）→ 必须发「继续」（不要重 dispatch）
+
+**教训**：gts-auto skill § 6 段 stableMs 默认 120000 需 patch → 300000
+
+## 🆕 Hermes `process(action=log)` vs OpenClaw 老 poll 区分（2026-08-20 实测纠正混淆）
+
+> 兄弟质问"每次才 1000 token 吗？这很少可忽略不计。把主动轮询间隔改为 60 秒（全自动模式为 120 秒）"—— 暴露了之前我**混淆 OpenClaw 老 poll 与 Hermes 工具调用**。
+
+| 动作 | token 消耗 | 说明 |
+|------|----------|------|
+| OpenClaw 老 poll（每轮触发 bot 整轮对话） | **每轮 2 亿+ cacheRead**（历史教训） | 每次 LLM 决策 + 全量前缀 cacheRead |
+| Hermes `process(action=log, session_id=<wait_id>, limit=2)` | **0**（纯工具调用） | 不走决策，直接读 process buffer |
+| Hermes `process(action=poll, sessionId=<dispatch_cli_sid>)` | **每轮 1000+ token**（触发了某种程度上的 LLM） | 实际 ≈ 整轮回复的开销（虽然不是 OpenClaw 那种全量 cacheRead） |
+| bot 整轮对话回复 | **~500-2000/次**（取决于上下文） | 真烧 token 的操作 |
+
+**结论**：
+- `process(action=log)` 是 token=0 的工具调用，60s/120s 间隔不烧 token
+- `process(action=poll)` 和整轮回复是真正烧 token 的（每次 1000+），频率要低
+- **不要混用**：主动轮询用 `process(action=log)`（间隔 60-120s），不用 `process(action=poll)`（已被 wait 脚本取代为历史）

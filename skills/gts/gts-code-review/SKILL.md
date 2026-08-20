@@ -66,7 +66,7 @@ description: "代码审核：调度OpenCode（简单审核Flash/复杂审核Pro�
   1: 调度 OpenCode 审核（简单 Flash / 复杂 Pro）
   2: 转达结果 + 逐类核对 + Specs 整理
   3: OpenCode Flash 修复 + 验证核对 + .last-review
-  R: 技能反思（调用 gts-skill-reflect，CLEANUP 后、保存前执行）
+  R: 🔴 技能反思（bot 做，禁 OpenCode）—— CLEANUP 后、保存前执行，bot 读记忆主表做反思
   S: 保存（gts-submit-save，最后一步，通知前）
 ```
 

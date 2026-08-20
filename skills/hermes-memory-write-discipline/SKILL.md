@@ -100,6 +100,7 @@ nudge 已覆盖"自动提炼 skill":每轮结束系统会主动提"要不要存�
 5. memory 调用 2 次还没完成批量改动 → **操作纪律 batch**(单次 operations 数组)
 6. **主表字符 > 70%(5600/8000)** → 主动走 gts-memory-compress(不依赖兄弟提醒,2026-08-20 实锤:5 天内堆满没主动压)
 7. **新增条目导致主表 > 80%(6400/8000)** → 该条 add 必须配套至少 1 条 remove(原则 2 单条压缩腾位)
+8. **兄弟质问「MEMORY又满了 / 没遵循skill吗 / ARCHIVE用起来」**(2026-08-20 兄弟原话) → **直接走方案 C 全量索引化**(纪律 12),所有 ★ 也按一行结论 + ARCHIVE 指针走(8-20 改拍板:不再 ★ 保留原文)。**反思 + 自纠** + **同步 patch gts-skill-update-discipline + gts-memory-compress + hermes-home-state-management**(防止下次再撞)
 
 ## 主动压缩检查(2026-08-20 兄弟质问后落地)
 

@@ -39,7 +39,7 @@ description: "验收流程：BDD→E2E→Specs→TDD验证→代码审核→回�
   3: Specs 修复 + TDD 验证 + 代码审核
   4: 回归测试 + E2E 回归门禁 + 操作文档
   5: 手动验证 + 部署
-  R: 技能反思（调用 gts-skill-reflect，CLEANUP 后、保存前执行）
+  R: 🔴 技能反思（bot 做，禁 OpenCode）—— CLEANUP 后、保存前执行，bot 读记忆主表做反思
   S: 保存（gts-submit-save，最后一步，通知前）
 
 > 🔴🔴🔴 **核心循环（2026-08-02 兄弟定稿）**：验收 = `TDD(BDD RED→GREEN) → E2E → E2E 失败回 TDD` 循环。
@@ -91,7 +91,7 @@ node scripts/skill-exec-manager.cjs init $sid $wid "gts-acceptance" `
     {"index": "3", "name": "Specs 修复 + TDD 验证 + 代码审核"},
     {"index": "4", "name": "回归测试 + E2E 回归门禁 + 操作文档"},
     {"index": "5", "name": "手动验证 + 部署 + 保存"},
-    {"index": "R", "name": "技能反思（调用 gts-skill-reflect）"}
+    {"index": "R", "name": "🔴 技能反思（bot 做，禁 OpenCode）"}
   ],
   "completedCount": 0,
   "context": {
@@ -148,7 +148,7 @@ node scripts/skill-exec-manager.cjs init $sid $wid "gts-acceptance" `
      📋 3: Specs 修复 + TDD 验证 + 代码审核
      📋 4: 回归测试 + E2E 回归门禁 + 操作文档
      📋 5: 手动验证 + 部署 + 保存
-     📋 R: 技能反思（调用 gts-skill-reflect）
+     📋 R: 🔴 技能反思（bot 做，禁 OpenCode）
 
    🔜 即将执行下一步 Step 2
 ```
@@ -179,14 +179,15 @@ node scripts/skill-exec-manager.cjs init $sid $wid "gts-acceptance" `
 
 **判断方式**：执行任何步骤前读取 `.skill-exec-state.<sessionId>.json`。如果文件存在且 `skillName` 不是 `"gts-acceptance"` → 视为嵌套调用，跳过所有状态文件操作。
 
-**反思规则**：
+**反思规则**（🔴 R 必须由 bot 做，2026-08-20 兄弟拍板）：
 
 | 场景 | 反思 | pitfalls 记录 |
 |------|------|--------------|
-| **独立触发**（兄弟直接说「验收」） | ✅ Step R 执行 gts-skill-reflect | 记到自己的 issue |
+| **独立触发**（兄弟直接说「验收」） | ✅ Step R **bot 主线**执行（读记忆主表 → patch skill → 关联落地）| 记到自己的 issue |
 | **嵌套调用**（被 feat/fix/refactor 调用） | ❌ 跳过反思 | 用**调用方 sessionId** 执行 `append-pitfall`，记到顶层 issue |
 
 > 嵌套时反思由顶层 skill 统一执行，本 skill 不重复反思。
+> 🔴 **R 绝不能派 OpenCode** — OpenCode 不可见 bot 记忆(MEMORY/ARCHIVE),派它写反思会丢失教训关联。
 
 ---
 
@@ -557,10 +558,10 @@ node scripts/skill-exec-manager.cjs step-done $sid --step-index 4 --step-name "T
 
 嵌套调用时**跳过本步骤**，直接进 Step 11（保存）。
 
-独立触发时，调用 gts-skill-reflect：
+独立触发时，必须 bot 主线执行（禁用 OpenCode）：
 
 ```
-走 skills/gts-skill-reflect/SKILL.md 流程（收集 pitfalls + 执行指标 + 记忆检索 → 分析 → 报告 → 等兄弟确认）
+走 bot 主线（读 phase-c-verification + 整合记忆主表 + 关联 skill/memory 落地），R/S 操作硬规详见 gts-dev-fix R 组同款条款（8 条款：反思报告 5 段 / patch skill 前 skill_view / patch 后 ls 落地 / 不擅自动 OpenCode / R 完成 = 兄弟拍板 S / 全自动 R+S 都 bot 做 / commit 前看 git status / commit msg 中文 / push 时机 = 兄弟拍板）
 ```
 
 > 反思产出改进建议，**等兄弟确认后才执行**（skill_workshop），不自动改 skill。

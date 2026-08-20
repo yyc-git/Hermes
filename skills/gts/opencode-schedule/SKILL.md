@@ -33,29 +33,45 @@ description: "OpenCode 调度协议入口。bot 调度 OpenCode 的铁规集合,
    - 普通:`volcark/deepseek-v4-flash-ga-260731`
    - 重活:`volcark/deepseek-v4-pro-ga-260813`
 3. **小米 token plan**(火山 pro 不可用/余额不足时):`xiaomi-token-plan/mimo-v2.5-pro`(2026-08-19 增补)
-4. **go 套餐 = 兜底**(火山/小米不可用/余额不足才用):`opencode-go/deepseek-v4-flash` / `opencode-go/deepseek-v4-pro`
+4. **go 套餐 = 兜底**(免费组+火山组全部不可用才用):`opencode-go/deepseek-v4-flash` / `opencode-go/deepseek-v4-pro`
 
-🔴 **go 套餐余额不足(2026-08-17 实锤)**:连续 5 次 Insufficient balance → 回退免费组(免费时段)或火山(其余时段)
+🔴 **go 套餐余额不足(2026-08-17 实锤)**:连续 5 次 Insufficient balance → 回退免费组(免费时段)或通知兄弟
 
-🔴🔴🔴 **免费组内故障轮换(2026-08-18 兄弟拍板,2026-08-20 定稿:状态文件化)**:
+🔴🔴🔴 **模型故障轮换(2026-08-20 扩展:免费组+火山组统一 blacklist)**:
 
-- **调度免费时段模型前必须先读状态**:`node scripts/opencode-free-model-state.mjs get --dir D:\Github\GTS-Play` → 用 `current`(跳过 blacklist 里的已挂模型,不用现场试)
-- **当前免费模型异常 → 先对同一免费模型发「继续」重试 3 次**(间隔依次 10s / 30s / 60s)→ 3 次都无法继续 + 明确报错(rate limit/429/401/5xx 持续)→ 才确认挂
-- **挂的判定以明确报错为准**:`step-finish reason=\"unknown\"` 不算挂(删会话重开继续用同模型);明确报 rate limit/429/quota/401/5xx + 继续不了 → `dead` 落盘 + 换组内下一个
-- **🔴🔴🔴 单个免费模型「额度用完」(`Free usage exceeded, subscribe to Go`)是硬信号,立即 dead + 切下一个**:不是「3 次继续失败」那种瞬时故障,是额度真的没了 → ① 立即 `dead <model>` ② `get` 拿 current(自动前进)③ 重新 dispatch 同 brief 用新模型。**不等 3 次继续**
+> **不需要模型预检**——dispatch 前不做 smoke test/连通性测试,直接派。派完后监控是否出现 rate limit/额度耗尽,命中则 blacklist + 自动轮换。
+
+- **dispatch 前必须先读状态**:`node scripts/opencode-free-model-state.mjs get --dir D:\\Github\\GTS-Play` → 用 `current`(跳过 blacklist 里的已挂模型,不用现场试)
+- **当前模型异常 → 先对同一模型发「继续」重试 3 次**(间隔依次 10s / 30s / 60s)→ 3 次都无法继续 + 明确报错(rate limit/429/401/5xx 持续)→ 才确认挂
+- **挂的判定以明确报错为准**：`step-finish reason=\"unknown\"` 不算挂（删会话重开继续用同模型）；明确报 rate limit/429/quota/401/5xx + 继续不了 → `dead` 落盘 + 换组内下一个
+- **🔴🔴 额度耗尽关键词（必须识别，查 part 表 data）**：
+  - 免费模型：`Free usage exceeded, subscribe to Go`
+  - **火山模型：`You have exceeded the 5-hour usage quota. It will reset at`**（兄弟拍板：火山 5h 限流走同样 blacklist 机制）
+  - 命中任一 → 立即 dead + 切下一个 + 重新 dispatch（不问兄弟）
+- **🔴🔴🔴 额度耗尽是硬信号,立即 dead + 切下一个**:不是「3 次继续失败」那种瞬时故障,是额度真的没了 → ① 立即 `dead <model>` ② `get` 拿 current(自动前进)③ 重新 dispatch 同 brief 用新模型。**不等 3 次继续**
+- **🔴🔴🔴 火山模型 5h 限流自动轮换**:
+  - 火山模型报 `You have exceeded the 5-hour usage quota` → 立即 `dead <volcark-model>`(TTL=5h,5h 后自动恢复)
+  - `get` 自动前进:火山组内下一个(flash→pro) → 免费组(免费时段) → go 兜底
+  - 5h 内所有火山模型都限流 → 降级到免费组(免费时段)或 go 兜底(非免费时段)
+  - **不需要问兄弟**——5h 限流是确定性故障,自动轮换即可
 - **挂/恢复命令**:
   ```powershell
   # 死(立即落盘 blacklist + current 前进)
-  node scripts/opencode-free-model-state.mjs dead <model> --dir D:\Github\GTS-Play
+  # 免费模型:18h 后自动恢复
+  node scripts/opencode-free-model-state.mjs dead <model> --dir D:\\Github\\GTS-Play
+  # 火山模型:5h 后自动恢复(同命令,脚本根据模型名自动判断 TTL)
+  node scripts/opencode-free-model-state.mjs dead volcark/deepseek-v4-flash-ga-260731 --dir D:\\Github\\GTS-Play
   # 恢复(实测可用)
-  node scripts/opencode-free-model-state.mjs revive <model> --dir D:\Github\GTS-Play
+  node scripts/opencode-free-model-state.mjs revive <model> --dir D:\\Github\\GTS-Play
+  # 一键恢复全部
+  node scripts/opencode-free-model-state.mjs revive-all --dir D:\\Github\\GTS-Play
   # 手动指定
-  node scripts/opencode-free-model-state.mjs set <model> --dir D:\Github\GTS-Play
+  node scripts/opencode-free-model-state.mjs set <model> --dir D:\\Github\\GTS-Play
   ```
 - 存储位置:`.opencode-session-meta/free-model-state.json`(与 session-meta 同目录)
 - 🔴 文件是权威状态:调度时**不要凭记忆/现场测试**猜模型,一律 `get` 读文件
-- **🔴 误判恢复**:被记「挂」的模型一旦实测可用(新会话跑通)→ 下轮 dispatch 回到首选(flash-free)重试
-- 仅免费组 6 个全部不可用/额度耗尽才允许切火山(火山在 go 之上)
+- **🔴 误判恢复**:被记「挂」的模型一旦实测可用(新会话跑通)→ `revive` 恢复
+- 免费组+火山组全部不可用才允许 go 套餐兜底
 
 🔴 **简单任务(单模块、不跨包、无性能安全约束)用 Flash 一刀切(先写 specs 再写代码)**,不上 Pro 浪费额度
 
