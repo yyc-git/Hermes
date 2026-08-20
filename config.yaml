@@ -1,62 +1,45 @@
-_config_version: 33
-providers:
-  xiaomi-token-plan:
-    name: 小米 MiMo · Token Plan
-    base_url: https://token-plan-cn.xiaomimimo.com/v1
-    api_mode: chat_completions
-    transport: openai_chat
-    model: mimo-v2.5-pro
-    models:
-      mimo-v2.5-pro:
-        supports_vision: true
-        supports_tools: true
-        supports_reasoning: true
-      mimo-v2.5:
-        supports_vision: true
-        supports_tools: true
-        supports_reasoning: true
-    api_key: tp-c4nh5k17ryh98cf9ebgsvdn1cu5c689afdduygz4sga1ad9w
 model:
-  provider: xiaomi-token-plan
-  default: mimo-v2.5-pro
-  base_url: https://token-plan-cn.xiaomimimo.com/v1
-  api_mode: chat_completions
-  api_key: tp-c4nh5k17ryh98cf9ebgsvdn1cu5c689afdduygz4sga1ad9w
-
-# ── Security ──────────────────────────────────────────────────────────
-# Secret redaction is ON by default — strings that look like API keys,
-# tokens, and passwords are masked in tool output, logs, and chat
-# responses before the model or user ever sees them. Set redact_secrets
-# to false to disable (e.g. when developing the redactor itself).
-# tirith pre-exec scanning is enabled by default when the tirith binary
-# is available. Configure via security.tirith_* keys or env vars
-# (TIRITH_ENABLED, TIRITH_BIN, TIRITH_TIMEOUT, TIRITH_FAIL_OPEN).
-#
-# security:
-#   redact_secrets: true
-#   tirith_enabled: true
-#   tirith_path: "tirith"
-#   tirith_timeout: 5
-#   tirith_fail_open: true
-
-# ── Fallback Model ────────────────────────────────────────────────────
-# Automatic provider failover when primary is unavailable.
-# Uncomment and configure to enable. Triggers on rate limits (429),
-# overload (529), service errors (503), or connection failures.
-#
-# Supported providers:
-#   openrouter   (OPENROUTER_API_KEY)  — routes to any model
-#   openai-codex (OAuth — hermes auth) — OpenAI Codex
-#   nous         (OAuth — hermes auth) — Nous Portal
-#   zai          (ZAI_API_KEY)         — Z.AI / GLM
-#   kimi-coding  (KIMI_API_KEY)        — Kimi / Moonshot
-#   kimi-coding-cn (KIMI_CN_API_KEY)   — Kimi / Moonshot (China)
-#   minimax      (MINIMAX_API_KEY)     — MiniMax
-#   minimax-cn   (MINIMAX_CN_API_KEY)  — MiniMax (China)
-#   bedrock      (AWS IAM / boto3)     — AWS Bedrock (Converse API)
-#
-# For custom OpenAI-compatible endpoints, add base_url and key_env.
-#
-# fallback_model:
-#   provider: openrouter
-#   model: anthropic/claude-sonnet-4
+  provider: minimax-cn
+  default: MiniMax-M3
+  base_url: https://api.minimaxi.com/anthropic
+  api_mode: anthropic
+  api_key: sk-5a95c04ccb534cc1af58ab5dc9f026c9
+auxiliary:
+  vision:
+    provider: opencode-go
+    model: kimi-k2.7-code
+_config_version: 33
+mcp_servers:
+  harness_plugin:
+    url: http://127.0.0.1:8090/mcp
+    enabled: true
+compression:
+  threshold: 0.35
+memory:
+  memory_char_limit: 30000
+agent: {}
+approvals:
+  mode: 'off'
+providers:
+  volcark:
+    api: https://ark.cn-beijing.volces.com/api/coding/v3
+    name: Volcengine Ark
+    key_env: ARK_CODING_API_KEY
+    transport: chat_completions
+    default_model: deepseek-v4-flash-ga-260731
+    discover_models: true
+  xiaomi-token-plan-cn:
+    api: https://token-plan-cn.xiaomimimo.com/v1
+    name: Xiaomi MiMo Token Plan (CN)
+    key_env: XIAOMI_TOKEN_PLAN_API_KEY
+    transport: chat_completions
+    default_model: mimo-v2.5
+    discover_models: true
+  xiaomi-token-plan-pro:
+    api: https://token-plan-cn.xiaomimimo.com/v1
+    name: Xiaomi MiMo Token Plan Pro
+    key_env: XIAOMI_TOKEN_PLAN_API_KEY
+    transport: chat_completions
+    default_model: mimo-v2.5-pro
+    discover_models: true
+memory_char_limit: 16000
