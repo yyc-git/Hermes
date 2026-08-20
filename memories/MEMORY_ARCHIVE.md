@@ -216,3 +216,155 @@ fix/feat/refactor skill 漏的硬步骤。merge 完 dev 不算完，必须依次
 用 ref 标记「正在切换内容」防 onClose 误触发 → 失效，因为 cleanup 先执行 close() 时 ref 还是 false。正解：antd-mobile Modal.show() 返回 handler 支持 replace() 更新内容不触发 onClose，两个 effect 分离：一个管开关（[isShowProp]），一个管内容（[currentPropItem]）用 handler.replace()。
 
 > 检索锚点：useEffect cleanup、Modal handler.replace、onClose误触发
+
+---
+
+## 兄弟期望直接执行 + 改动纪律（2026-08-20 兄弟拍板）
+
+兄弟原话：「你直接让会话继续啊」「你去修复下啊」（2026-08-18 多次）；「不需要我拍板啊，你直接 dispatch」（2026-08-20 再拍）。
+
+**改动纪律（8-20 定稿）**：
+- 不需拍板直接干：源码改动 / 复制文件 / 创建目录 / 改 build 配置 / 调阈值 / 加功能 / 写 brief
+- 必须列计划+等拍（不可逆操作）：`还原文件` / `git checkout` / `git reset --hard` / `git stash pop` / `rm -rf`
+
+**遇能力外的事**：启动 GUI server / 配 API key / 查余额等 → 用一句话说明限制+给方案，别推卸或反问。
+
+> 检索锚点：直接执行、不需拍板、不可逆操作、等拍
+
+---
+
+## 源码改动 100% dispatch OpenCode（2026-08-18 起算，2026-08-20 加严）
+
+扩展名清单（100% dispatch，不允许 bot 直改）：`.ts` / `.tsx` / `.js` / `.mjs` / `.cjs` / `.feature` / `.steps.ts` / `.scss`。
+
+理由：bot 模型 < OpenCode，bot 亲手改 = 质量退化。bot 只做调度 + 监控 + 复验 + git + notify。
+
+**禁止**：bot 跑 jest / tsc 验证自己改的代码（自己验证自己 = 死循环）。
+
+**仅例外**：诊断/临时验证类小改动（加日志、去 clamp、注释代码块、1 行验证修复）可直改。
+
+> 检索锚点：源码改动、dispatch、bot模型限制
+
+---
+
+## 数据/部署红线（2026-08-18 兄弟拍板）
+
+- 默认不操作 CloudBase 文档型数据库集合（增删改查/迁移），任何操作必须先问兄弟
+- 线上/单机部署必须兄弟确认
+- 部署前先退出 Clash（直连腾讯云最快）
+
+> 检索锚点：CloudBase、部署红线、退Clash
+
+---
+
+## bot 不做根因分析（2026-08-19 拍板）
+
+bot 主线：最多 1 句方向。读 ≥3 文件 / 写完整根因 / 出方案对比 = 违规（伞形 skill `gts:bot-rca-discipline` 拆出来管控）。
+
+> 检索锚点：根因分析、bot-rca-discipline、违规边界
+
+---
+
+## webpack 循环依赖 TDZ 修复（2026-08-19 实锤）
+
+🔴 `export { x } from "y"` 仍生成 `let x = module.x` 立即赋值，**不能消除循环 TDZ**。
+
+**正解**：在**定义方**改 `export function`（方案 B），不能在 re-export 层用 `export { } from`（方案 A 不可靠）。
+
+触发场景：webpack dev-server 启动崩 `Cannot access 'X' before initialization`。
+
+> 检索锚点：循环依赖、TDZ、export function、方案B
+
+---
+
+## LLM fail 先分类再动手（2026-08-18 改，2026-08-19 加细）
+
+🔴 LLM fail 先分类再动手：
+- **rate limit / 429 / quota** = 真限流 → 等窗口或换模型
+- **401 / timeout / 5xx** = 瞬时 → 同 session 发「继续」
+- **纯静默 unknown + 模型实测可用** = 删会话直接重开（flash-free 额度用完会明确报 rate limit，不会静默 unknown；**换模型是最后手段**）
+- **其余时段** → 火山 flash
+
+> 检索锚点：LLM fail、rate limit、瞬时、静默 unknown、删会话重开
+
+---
+
+## token 成本敏感（2026-08-18 兄弟偏好）
+
+兄弟对 token 成本敏感：
+- 简单任务 Flash 级；复杂才 Pro
+- bot 主线不做重活（读 >3 文件一律 dispatch）
+- 同类小任务合并 dispatch，禁止碎片化逐个派
+- fix 循环 >2 轮拆新 session
+- 长任务拆 <30min 短 session + `--no-replay`
+- tokens 近上限时停 + 开新
+- cacheRead >50M 或运行 >2h 主动停开新
+
+> 检索锚点：token 成本、Flash vs Pro、合并 dispatch、拆 session
+
+---
+
+## 恢复中断会话后必清旧 session（2026-08-19 实锤）
+
+🔴 兄弟原话「你为什么没有先删除旧的会话再dispatch啊？」
+
+恢复后第一步：opencode db 查同任务活跃 session → gts-opencode-stop（**禁止直接 delete，走 skill 正规流程**）→ 确认零残留（三重验证）才 dispatch 新 session。
+
+**不能凭记忆判 session 存活，必须查 DB**。
+
+> 检索锚点：清旧 session、gts-opencode-stop、三重验证
+
+---
+
+## 对外断言前必须实测（2026-08-18+08-19）
+
+🔴 commit message / agent 自报 / 历史笔记 / daily log 都 = **待实测假设**。
+
+信了 68728ceea「Xiaye1 未变」实改 XiaHui cloth collision 不改面数，真凶在 pmx 资产 fc1e492f1。错误根因 → 错误派工 → 浪费一轮 + 兄弟拍桌。
+
+对外断言（尤其 Blocking）必须附实测命令 + 输出（基线对比、grep 行号），不能凭代码阅读下结论。
+
+详见 gts-dispatch-preflight + gts-auto §7.4.1。
+
+> 检索锚点：实测、Xiaye1、错误根因、对外断言
+
+---
+
+## OpenCode 调度 + 模型优先级（2026-08-20 兄弟拍板）
+
+- 走 opencode-schedule skill（attach `http://localhost:4098`）
+- wait 脚本监控（**参数单位 ms**，不是 s）
+- **模型优先级 8-20**：
+  - **Pro**：火山 → mimo → go
+  - **Flash**：免费组轮换 → 火山 → go
+- **opencode-go 仅兜底，从不首选**
+
+详见 4 个 dispatch skill（已 patch）：gts-opencode-dispatch-hardening 铁律 9 + opencode-dispatch-pitfalls 教训 3 + opencode-hermes-dispatch-pitfalls 兄弟硬偏好（8-20 版） + gts-dispatch-preflight argv 终极模板。
+
+> 检索锚点：opencode调度、attach 4098、模型优先级、go 兜底
+
+---
+
+## session 活跃判定（2026-08-18）
+
+100% 信 DB `time_updated` 窗口（>now-600000），勿用 Web UI `/api/session` 字段手判（踩坑：`-not` 优先级 bug 全报 running=False 差点重启 4098）。
+
+**真完成三重判定**：① wait --check reason=stop+idle≥30s ② Web UI 4098/api/session 查到 sid ③ bot 跑 jest + git status 核对 agent 自报。
+
+详见 opencode-session-ops skill。
+
+> 检索锚点：time_updated、session 活跃、三重判定
+
+---
+
+## Hermes 默认模型 + 桌面 UI 覆盖（2026-08-18）
+
+- 默认模型：minimax-cn/MiniMax-M3（多模态，api_mode=anthropic）
+- **切 provider 必显式 api_mode**
+- 新会话模型受桌面 UI last-used-model 覆盖（非 config default，key=`hermes:last-used-model:managed:...`）
+
+排查路径见 hermes-provider-config skill 踩坑第 8 条。
+
+> 检索锚点：minimax-cn、api_mode、last-used-model、UI 覆盖
+
+---

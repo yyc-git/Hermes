@@ -1,6 +1,6 @@
 ---
 name: "hermes-memory-write-discipline"
-description: "在 Hermes Agent 里如何正确使用记忆机制 — sync_turn + nudge 自动跑,bot 不主动调 memory 工具写满主表;主表只放一行结论 + 指针,SOP 进 daily;声明式事实,非指令;batch 必用 operations 数组。触发：兄弟说『记 memory』『记忆』『MEMORY.md 满了』『用机制』,或 bot 自己想把内容写进 MEMORY.md 时。"
+description: "在 Hermes Agent 里如何正确使用记忆机制 — sync_turn + nudge 自动跑,bot 不主动调 memory 工具写满主表;主表只放一行结论 + 指针,SOP 进 ARCHIVE/daily;声明式事实,非指令;batch 必用 operations 数组;**主表字符 > 5600/8000(70%)主动压缩**。触发：兄弟说『记 memory』『记忆』『MEMORY.md 满了』『用机制』,或 bot 自己想把内容写进 MEMORY.md 时。"
 status: "active"
 trigger: "兄弟说'记 memory / 记忆 / 写记忆 / MEMORY.md 满了 / 用机制 / 怎么用 Hermes 记忆';bot 自觉想写 memory 时自动加载自检"
 created: "2026-08-18"
@@ -37,10 +37,12 @@ Hermes 已经有的自动化机制(详见 `references/hermes-memory-architecture
 
 **完整 SOP / 踩坑经过 / 命令片段** → `D:\Github\GTS-Play\笔记\daily\YYYY-MM-DD.md` 或对应笔记(`决策记录/` / `代码笔记/` / `方案/` 等)。
 
+**兄弟 8-20 改拍板:★ 也按此走**(不再 ★ 保留原文)。**所有规则 = 一行结论 + ARCHIVE 章节指针**。ARCHIVE 容量不限但要可检索(章节标题 + 锚点词)。
+
 **自检三问**(写入主表前):
-1. 这条是**约束结论**还是**操作手册**? 结论 → 主表,手册 → daily
-2. 删掉细节后,**半年后我能否凭一行字知道该查哪里**? 不能 → daily
-3. 是否有"为什么/怎么操作/踩了什么坑/具体命令"? 有 → daily
+1. 这条是**约束结论**还是**操作手册**? 结论 → 主表,手册 → daily/ARCHIVE
+2. 删掉细节后,**半年后我能否凭一行字知道该查哪里**? 不能 → daily/ARCHIVE
+3. 是否有"为什么/怎么操作/踩了什么坑/具体命令"? 有 → ARCHIVE
 
 ### 原则 3:**声明式事实,非指令**
 
@@ -81,10 +83,11 @@ nudge 已覆盖"自动提炼 skill":每轮结束系统会主动提"要不要存�
 
 ## 关联
 
-- **`gts-memory-search`**(本会话创建):按需召回(state.db FTS5 + skills/ + 笔记/ ripgrep)弥补内置主表 8000 字符上限
-- **`gts-memory-compress`**:主表 > 50KB 时的索引化瘦身工具(保护 ★ 规则)
-- **MEMORY.md**(`E:\Hermes Agent CN Desktop\data\hermes-home\MEMORY.md`):主表存的就是这套纪律,每次启动注入
-- **state.db**(`...hermes-home\state.db`):所有历史对话原文 + FTS5 索引,本会话 `gts-memory-search` 用到
+- **`gts-memory-search`**(本会话创建):按需召回(state.db FTS5 + skills/ + 笔记/ ripgrep)弥补内置主表 8000 字符硬上限
+- **`gts-memory-compress`**:主表字符 > 5600/8000 = 70% 时的索引化瘦身工具(保护 ★ 规则,先补 ARCHIVE 再压主表)
+- **MEMORY.md**(`$env:HERMES_HOME/memories/MEMORY.md`):**Hermes memory 工具的写入目标**(带 `.lock` 文件锁),磁盘字符硬上限 8000,启动时一次性注入到 system prompt。**不是**根目录那个 `MEMORY.md`(5720 字节的 OpenClaw 旧版)
+- **MEMORY_ARCHIVE.md**(`$env:HERMES_HOME/memories/MEMORY_ARCHIVE.md`):详细内容/踩坑/SOP 的归属地,容量不限,按章节组织 + 锚点词检索
+- **state.db**(`$env:HERMES_HOME/state.db`):所有历史对话原文 + FTS5 索引,本会话 `gts-memory-search` 用到
 
 ---
 
