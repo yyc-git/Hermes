@@ -96,3 +96,40 @@ return show ? <Mask className="xxx" opacity="default">...</Mask> : null
 - `Modal.show()` 的 props 类型 `ModalShowProps` 支持 `afterShow`
 - 但 `handler.replace()` 会触发 remount，可能再次触发 afterShow
 - 建议：afterShow 逻辑用 useEffect 按依赖条件执行，不依赖 Modal 的 afterShow 回调
+
+## ⚠️⚠️⚠️ useEffect 早触发 vs renderButton .then stale write 竞争 (2026-08-20 实锤)
+
+**触发场景**:Upgrade.tsx 的 Mask 关闭时,旧 `afterClose` 回调在动画后才触发(晚于按钮异步链),所以 `handleCloseModal` 的 `startLoop` 是**最后一个写入者**。改用 useEffect 触发后,useEffect 跑在 commit 阶段(同步),比 `renderButton` 的 `.then(writeState(旧state))` 微任务链更早,导致 `startLoop` 被回滚。
+
+**核心时序对比**:
+```
+旧 afterClose:                                   新 useEffect:
+  click → renderButton handler dispatch([])        click → renderButton dispatch([])
+         ↓ Promise.resolve(staleState)                      ↓ Promise.resolve(staleState)
+         ↓                                                  ↓
+  Mask 动画 (200ms+)                                  useEffect commit (同步)
+         ↓                                                  ↓
+  afterClose → handleCloseModal → startLoop          handleCloseModal → startLoop
+         ↓                                                  ↓
+  .then(writeState(staleState)) ✓ 最后写              .then(writeState(staleState)) ✗ 后写回滚
+```
+
+**✅ 修复方案 1 (1 行,推荐)**:useEffect 里延后到宏任务
+```tsx
+useEffect(() => {
+  if (upgradeData.length > 0) {
+    upgradeMaskWasShownRef.current = true
+  } else if (upgradeMaskWasShownRef.current) {
+    upgradeMaskWasShownRef.current = false
+    writeState(setIsWait(readState(), false))
+    // 延后到宏任务,确保 renderButton .then(writeState(旧state)) 已执行完
+    setTimeout(() => handleCloseModal(), 0)
+  }
+}, [upgradeData])
+```
+
+**✅ 修复方案 2 (彻底,但改动 3 个 handler)**:Skip / Change / applyItem 三个按钮各自调用 `handleCloseModal()` 并返回 `readState()`(恢复后的新 state),让 button handler 返回的 state 已是正确状态,stale write 消失。
+
+**🔴 教训**:从 `afterClose` 回调迁到 `useEffect` 的"等价"改造时,时序并不等价。新 `useEffect` 在 commit 阶段同步执行,旧 `afterClose` 在动画后才执行(微任务后面)。如果有依赖其他写后于按钮异步链的副作用,必须显式 `setTimeout(0)` 或 `queueMicrotask`(后者不一定够,要看队列实现)对齐旧时序。
+
+**教训来源**:commit `862970e80` (gts-dev-fix-upgrade-modal-loop),Modal 白屏修复 commit `d6681051e` 衍生 bug。
