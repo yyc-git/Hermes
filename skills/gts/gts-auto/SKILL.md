@@ -238,6 +238,22 @@ loop:
      - BDD/单元测试
      - E2E 测试
      - 代码审核
+     - 🔴🔴 **worktree cleanup 子步**（2026-08-20 兄弟拍板）：如果当前步骤是 `B` / `C1` / `C2` / `M` 任一完成且本次任务在 worktree 中实现 → 在 step-done 之前自动跑：
+       ```powershell
+       # §merge-verify（worktree-junction）：remove 前必跑，不通过 abort
+       git log dev..wt1 --oneline            # 1️⃣ 应为 0 个 commit
+       git merge-base dev wt1                 # 2️⃣ 应等于 wt1 HEAD
+       # 3️⃣ Get-Content 检查关键文件内容已更新
+       git log --oneline -5                   # 4️⃣ 应见 wt commit / Merge commit
+       cd D:\Github\wt1 && git status --porcelain  # 5️⃣ 应为空
+
+       # §merge-verify 全过后才执行 cleanup
+       git worktree remove D:\Github\wt1 --force
+       git branch -D wt1
+       git worktree prune
+       git worktree list   # 二次确认只剩 dev
+       ```
+       **任何一项 §merge-verify 不通过 → 阻塞当前步骤 + `notify.ps1` 通知兄弟**（参考 §7.4 桌面通知协议），**禁止自动 merge**。
 
   4. 步骤完成后：
      - 更新 issue（status 不变，completedCount += 1，追加进度日志）

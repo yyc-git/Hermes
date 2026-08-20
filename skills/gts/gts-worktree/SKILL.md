@@ -90,3 +90,83 @@ node -e "for (const m of ['three','webpack','typescript']) { try { require.resol
 ## node_modules 体积诊断
 
 worktree 慢/install 慢的伴生问题:node_modules 7GB 诊断与瘦身 → `references/node_modules-optimization.md`
+
+## 🔴🔴 多 worktree 并存:选对分支再 merge(2026-08-20 实锤)
+
+**陷阱**:多个 worktree(wt1/wt2/wt3-prop-fix …)并存时,**对话上下文里聊的"角色名"(如 XiaHui)≠ 该工作实际所在的 worktree**。我曾因对话上下文是 XiaHui,默认猜 `git merge wt1`,但兄弟纠正"应该 merge wt2"——wt2 才是 PMX 减面/hull 工作的分支,wt1 是 XiaHui 角色数据写回分支。
+
+**根因**:worktree 分支名(英文/缩略,如 `wt1`/`wt2`/`wt3-prop-fix`)看不出该 worktree 在做哪条工作线;角色/功能名(如 "XiaHui 修复")和工作线分支是**两套命名空间**,容易混。
+
+**对策**(决定 merge 哪个 worktree 前必跑,2026-08-20 兄弟纠正后落地):
+
+1. **`git worktree list` 列出所有 worktree + 分支**:
+   ```powershell
+   git worktree list
+   # D:/Github/GTS-Play      <dev>
+   # D:/Github/wt1           <wt1>
+   # D:/Github/wt2           <wt2>
+   # D:/Github/wt3-prop-fix  <wt3-prop-fix>
+   ```
+
+2. **对话上下文关键词 → 反查 commit**:`git log --all --oneline | Select-String -Pattern "<关键词>"` 看哪些分支命中:
+   ```powershell
+   # 例:对话说"昨天修复 PMXReduceFace",想确认是不是 wt2 做的
+   git log wt2 --oneline | Select-String -Pattern "PMX|reduce|qem|hull|face|Xiaye"
+   # 命中 9e68824d0 Xiaye1 凸包局部变大跟随错误(issue 0fe79360) → 是 wt2 范围 ✅
+   git log wt1 --oneline | Select-String -Pattern "PMX|reduce|qem|hull|face"
+   # 命中 d740a1dd2 hasToeIKBones / be243ac71 XiaHui 数据修复(已 merge) → 不在 PMX 减面主线
+   ```
+
+3. **用 `git branch --contains <关键commit> -a` 反查真实归属**:
+   ```powershell
+   # 例:某个 commit 自报"修了 PMX 减面"→ 看它在哪些分支
+   git branch --contains fcde688c9 -a
+   # * dev      ← 已在 dev
+   # + wt1      ← wt1 上有
+   # + wt2      ← wt2 上有
+   # 已 merge → 不需要再 merge
+   ```
+
+4. **判定速查表**(兄弟 2026-08-20 实测时的工作线分工):
+   | worktree | 当前主线工作 | 关键 commit 关键词 |
+   |---|---|---|
+   | `wt1` | XiaHui 角色数据写回(game 侧闭环) | `XiaHui 数据修复` / `hasToeIKBones` / `覆盖率阈值 40%` / `cloth damageParts` |
+   | `wt2` | **PMX 减面工具修复 + Xiaye1 角色接入(hull/cloth)** | `PMXReduceFace` / `reduce.mjs` / `QEM` / `Xiaye1 hull` / `trigone` |
+   | `wt3-prop-fix` | antd-mobile Modal/Prop 面板修复(frontend) | `Modal` / `Prop` / `白屏` / `Mask` / `command API` |
+   | **dev**(主仓) | 已 merge 的闭环 | 任何 `* dev` 的 commit |
+
+5. **merge 前必做的 3 件事**(沿用 worktree-junction skill「合并前三查」+ 本节反查分支):
+   ```powershell
+   # a. 列 worktree 清单
+   git worktree list
+   # b. 对话关键词 → 反查 commit 在哪条工作线
+   git log --all --oneline | Select-String -Pattern "<关键词>" | Select-Object -First 10
+   # c. 列该 worktree 独有 commit(确认有没有东西还没 merge)
+   git log dev..<目标 worktree 分支名> --oneline
+   # d. 确认 merge-base 不是 wt 的 HEAD(否则 = 早已 merge)
+   git merge-base dev <目标 worktree 分支名>
+   ```
+
+   **🔴 何时 merge 是 no-op("Already up to date")(2026-08-20 实锤)**:
+   如果上面 (d) `merge-base` 输出 **等于 wt 的 HEAD**,且 (c) `git log dev..wtN` 是空 → **执行 `git merge wtN --no-ff` 会输出 `Already up to date.`,不会产生 merge commit**。这种情况说明 wt 的所有工作**已经 merge 进 dev 了**(只是 wt 分支指针没动)。正确做法:**照实执行 merge**(让兄弟看到 "Already up to date" 这个反馈),不要凭"该 merge 了"的直觉跳过 — 兄弟可能想看到已 merge 的确认。
+
+   速查:
+   ```powershell
+   # 一行判断:no-op?
+   $wtHead = git rev-parse wtN
+   $mb = git merge-base dev wtN
+   $uniqueCount = (git log dev..wtN --oneline | Measure-Object).Count
+   if ($wtHead -eq $mb -and $uniqueCount -eq 0) {
+     Write-Host "wtN 已 merge 进 dev,merge 会 no-op"; exit 0
+   }
+   ```
+   (2026-08-20 实测:兄弟纠正 merge wt2,w t2 HEAD `9e68824d0` 就是 merge-base,且 `git log dev..wt2` 空 → "Already up to date",但 merge 仍然该走一遍给兄弟看反馈,不能跳过)
+
+**反面教材(2026-08-20)**:
+- 兄弟说"PMXReduceFace 修复"+"打开 dev server 测 XiaHui 模型"
+- bot 没反查,凭"对话里 XiaHui 出现频率高"猜 merge wt1
+- 兄弟立刻纠正"应该 merge wt2"——wt2 才是 PMX 减面 + Xiaye1 工作
+- (后续核:其实 PMXReduceFace 工具修复早就 merge 到 dev 了,wt1 也已 merge,w t2 是 Xiaye1 角色接入另一条线,**兄弟到底要测哪条仍需进一步确认**)
+- **教训**:对话上下文 ≠ 工作线命名空间,**先 git 反查 commit 归属再决定 merge 哪个**
+
+**记忆点**:多 worktree 时,**关键词 → 反查 `git log <wt> | grep 关键词` → 看命中**。**禁止凭对话上下文角色名猜分支**。

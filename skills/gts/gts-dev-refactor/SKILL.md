@@ -444,9 +444,21 @@ node scripts/skill-exec-manager.cjs step-done $sid --step-index B --step-name "�
 
 ### M-0 — 明确宣布进入 M 阶段
 
+> 🔴🔴 **worktree 改动必须 merge 回 dev + 立刻删 worktree（2026-08-20 兄弟拍板）**：本次 refactor 若在 worktree 中实现（opencode-schedule 5️⃣ 规则：改 frontend/ 默认走 worktree），**进入 M 阶段前必须按顺序执行**：
+> 1. **commit + merge 回 dev** —— 兄弟手动测试的就是 dev 代码，测试前未 merge = 测了个寂寞。merge 流程见 worktree-junction skill「完成后必须 merge 回主仓库」。
+> 2. **🔴🔴 §merge-verify 5 项验证全过** —— `git worktree remove` 前**必须**跑完 worktree-junction §merge-verify，不通过 → 立即 abort + notify 兄弟，**不许自动 merge**。
+> 3. **`git worktree remove <wt路径> --force`** —— §merge-verify 全过后才能跑。漏删 = D 盘残留占空间 + 下次开新 wt 误用旧分支（2026-08-20 实锤：XiaHui feat/fix/refactor 完成后 wt1/wt2/wt3-prop-fix 三个 worktree 都没删，今早才发现）。
+> 4. **`git branch -D <wt分支>`** —— 删 worktree 后顺手删分支
+> 5. **`git worktree prune`** —— 清 git 内部 worktree 元数据缓存
+> 6. **二次确认**：`git worktree list` 只剩 dev 一个
+>
+> **触发时机**：全自动模式下，在 step-done B2 后、进 Phase C 前执行。标准模式：进 M 阶段前必须执行。**M-0 不执行完不许进 M-1**。
+>
+> 全自动模式补充：M 阶段完成后也要再检查一次。
+
 > 🔴 **全自动模式下**：C 验收完成后，先执行 R（反思）→ S（保存）→ 通知兄弟（自动步骤完成），然后再进入 M 阶段。
 
-**进入 M 阶段时，必须明确说出「进入 M 阶段（手动测试）」。**
+**进入 M 阶段时，必须明确说出「进入 M 阶段（手动测试）」（在 worktree cleanup 完成之后）。**
 
 模板：
 ```

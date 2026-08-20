@@ -30,15 +30,34 @@ umbrella: false
 **正确**:
 - 任何批量改动 = **单次 `memory` 调用 + `operations` 数组 batch**
 - 例: 删 1 条 + 加 1 条 + 改 1 条 = 1 次 `memory(action=...)` 调用,operations 数组 3 项
-- **禁止** 拆成多次 add/replace/remove 单调用
+### 纪律 3:`patch` 必须显式 `mode: "replace"` + `replace_all: false`(2026-08-20 补两种 mode 区别)
 
-### 纪律 3:`patch` 必须显式 `mode: "replace"` + `replace_all: false`
 **违反症状**: patch 报 "Could not find a match" / 漏 `old_string` / 多次重试
+
 **正确**:
 - 必传: `mode` + `path` + `old_string` + `new_string`
 - 必传显式: `replace_all: false` (默认 false,但显式声明避免歧义)
 - 改 1 行用 patch,改大量或全文件用 write_file 重写
 - patch 失败: 先 read_file 看实际内容(可能跟我读时不一样了)
+
+**🔴 patch 工具两种 mode 互斥字段(2026-08-20 一天踩 5 次)**:
+
+| mode | 必传字段 | 禁用字段 | 用途 |
+|------|---------|---------|------|
+| `mode='replace'` (默认) | `path` + `old_string` + `new_string` | **`patch` 字段** | 改单文件:old_string → new_string 精确替换 |
+| `mode='patch'` | `patch` 字段(V4A 格式字符串) | **`path` 字段** | 改多文件:批量 V4A patch 跨文件打补丁 |
+
+**典型错配**:
+- ❌ `mode='patch'` 但同时传 `path` → 工具说"path required" 因为它走 patch 路径不认 path
+- ❌ `mode='replace'` 但同时传 `patch` 字段 → 工具优先按 patch 走,旧字符串找不到
+- ❌ 反复 4-5 次都忘了到底用哪个 mode,每次换着试
+
+**自查清单**(调 patch 前 30 秒):
+1. 改 1 文件 → 用 `mode='replace'` + path + old_string + new_string(三个)
+2. 改多文件或 V4A 格式 → 用 `mode='patch'` + patch 字段(只要这一个)
+3. 不确定 → 默认 `mode='replace'`,99% 场景够用
+4. 报"path required" → 切换 mode='patch' 路径
+5. 报"Could not find a match" → 看 old_string 是否精确(读现状文件比对)
 
 ### 纪律 4:ad-hoc verify 必跑(改 / 创后)
 **违反症状**: 改完直接 commit / 直接汇报 → system 提示"未跑 verify"
@@ -150,6 +169,7 @@ gts-doc-redline           ←  doc/ 读 / 写
 - `skill_manage(action="patch")` 在 `gts-skill-update-discipline` 这种**本会话新创**skill 上 → **read-before-write 强制**(必须先 `skill_view`)
 - `skill_manage` 在 `gts-git-commit` / `gts-submit-save` 这种 **created_by=None**(兄弟手写)→ **off-limits**,review 模式拒
 - 改受保护 skill 只能在**同会话交互期**做(非 review),跟本轮对话已 patch 过的口径一致
+- **review 模式工具白名单**(2026-08-20 last review 实测):**只能 `memory` + `skill_manage`**,**禁止** `patch` / `terminal` / `search_files` / `read_file` / `write_file` / `browser_*` / `web_search` / `web_extract` / `vision_analyze` / `todo` / `process` / `delegate_task` / `compact` / `context_usage` / `project_*` / `skills_list` / `skill_view`。**所有"验证/搜索/运行命令"在 review 模式拿不到就报告"无法验证",不要试图绕过**。
 
 ## 纪律 6:落地用户原文不加副文本(2026-08-19 兄弟拍板)
 
@@ -195,6 +215,46 @@ gts-doc-redline           ←  doc/ 读 / 写
 **测试用例**: 写完汇报前自检"这一段是兄弟问的还是我塞的?" —— 兄弟没问的不写。
 
 ---
+
+## 纪律 10:worktree merge + cleanup 必走的硬步骤(2026-08-20 兄弟拍板)
+
+**违反症状**: gts-dev-fix M-0 写了"merge 回 dev" 但没强制 remove worktree → 兄弟实测 wt1/wt2/wt3-prop-fix 三个目录没删(D 盘占位)。**feat/refactor skill 完全没提 merge / cleanup**(2026-08-20 实锤)。
+
+**正确**: 任何 dev 工作流(feat/fix/refactor)在 worktree 中实现后,merge 完成 = 5 步 SOP,缺一不可:
+
+```bash
+# 1. 切回主仓,merge worktree 分支
+cd D:\Github\GTS-Play
+git merge --no-ff wt1 -m "Merge wt1 → dev: <任务摘要>"
+
+# 2. push 到 origin
+git push origin dev
+
+# 3. 删除 worktree 实体目录
+git worktree remove D:\Github\wt1
+
+# 4. 清残留元数据
+git worktree prune
+
+# 5. 二次确认 + 写 issue 记录
+git worktree list   # 必须只看到主仓,没有任何 wt*
+node scripts/skill-exec-manager.cjs step-done $sid --step-index <最后一步> --notes "merge commit: $(git rev-parse HEAD | cut -c1-8)"
+```
+
+**铁律**: step-done 最后一步必须包含 merge commit hash + worktree 来源(`wt1` / `wt2` / `wt3`),issue 文件里也要写,方便日后 grep 知道代码来自哪个 worktree。
+
+**应用到 skill 的位置**(兄弟拍范围后由本伞形引用,不需要每个 skill 复制全文):
+- `gts-dev-fix` M-0 后加 `### Worktree Cleanup(merge 后必走)`
+- `gts-dev-feat` Phase B 末尾加 `### Worktree Cleanup(merge 后必走)`
+- `gts-dev-refactor` Phase M 加 `### Worktree Cleanup(merge 后必走)`
+- `gts-auto` Phase S 加 worktree cleanup 硬约束(全自动模式也要走)
+
+**自查清单**(汇报"已 merge"给兄弟前):
+- [ ] `git log --oneline -3 dev` 能看到 merge commit
+- [ ] `git worktree list` 没有任何 wt* 残留
+- [ ] issue 文件有 merge commit hash 字段
+- [ ] `git status` 干净
+- 缺任何一项 = 汇报前补完再说
 
 ## 纪律 9:sqlite3 查 OpenCode DB 的正确路径(2026-08-19 新增)
 

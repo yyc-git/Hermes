@@ -13,10 +13,11 @@ description: "派工前根因验证 + 反向断言清单。bot 在写 brief 派 
 
 满足以下**任一条件**时，必须走本 skill：
 
-1. **修复任务 brief 提到某个 commit 的自报**（如 "fix X 报告说 Y 未变"）→ 派工前必须 `git show` 验真实 diff
-2. **bug 描述里有历史断言**（"X 改了 Y / X 没动 Y"），断言源 = commit message / agent 自报 / PR 描述 / 笔记 / daily log
-3. **根因涉及"配置改 → 数据变"** 类推断（如 cloth 规则改面数 / 枚举改字节）→ 必须先验证配置层 ≠ 数据层
-4. **承接上一轮 OpenCode 报告**（"已修 / 已完成 / 已验证"），派新 brief 时直接引用 → 视为待实测假设
+1. **修复任务 brief 提到某个 commit 的自报**(如 "fix X 报告说 Y 未变")→ 派工前必须 `git show` 验真实 diff
+2. **bug 描述里有历史断言**("X 改了 Y / X 没动 Y")，断言源 = commit message / agent 自报 / PR 描述 / 笔记 / daily log
+3. **根因涉及"配置改 → 数据变"** 类推断(如collision 规则改面数 / 枚举改字节)→ 必须先验证配置层 ≠ 数据层
+4. **承接上一轮 OpenCode 报告**("已修 / 已完成 / 已验证")，派新 brief 时直接引用 → 视为待实测假设
+5. **兄弟说"X 应该 Y"**(期望式描述,如"demo 应该可以切换模型"/"X 应该已经修好")→ 派工前必须 grep 实查,不能信期望(模式 F)
 
 ## 🔴 派工前根因验证 Checklist（5 项强制）
 
@@ -99,6 +100,7 @@ description: "派工前根因验证 + 反向断言清单。bot 在写 brief 派 
 - "反向断言"
 - "Phase Fix 派工前"
 - 兄弟说"为什么 X 改了/没改"时 → 必须走本 checklist
+- 兄弟说"X 应该 Y"(期望式) → 必须先 grep 实查,不走"启服务测 Y"快速路径(模式 F)
 
 ## 🔴 跨 git 仓派工（独立仓库，2026-08-19 PMXReduceFace 实测教训）
 
@@ -307,7 +309,7 @@ Agent 浪费 30+ 秒试错才回到 workdir 内路径。如果 brief 开头明�
 
 **🔴 实战规则**(`gts-dispatch-preflight` 适用域扩展:任何对外断言不只是派工前):
 
-1. **回答"X 改没改 / X 修了什么"类问题前,先 git 查证**(不信记忆/MEMORY/daily/笔记)：
+1. **回答"X 改没改 / X 修了什么"类问题前,先 git 查证**(不信记忆/MEMORY/daily/笔记):
    - `git log --all --oneline --grep="<关键词>" -20` 找真实 commit hash
    - `git show --stat <sha>` 看真实改动文件 + diff 行数
    - **不要抄 commit message 当真实改动**——message 可能漏写/夸大
@@ -328,6 +330,59 @@ Agent 浪费 30+ 秒试错才回到 workdir 内路径。如果 brief 开头明�
 - **兄弟上下文口述**(兄弟也可能记错,实测最稳)
 
 **记忆点**：**任何"对外断言 X 改没改 / X 修了什么"前,先 git 查证**。MEMORY 是策略快照不是事实快照,带 timestamp 才有意义。兄弟质问"不是都修复了吗?"的根因 = bot 把 MEMORY 当事实,没 git 复查。
+
+## 🔴 模式 F:用户说"X 应该能/应该有" → 实查代码,不信期望(2026-08-20 实测)
+
+**陷阱**:兄弟描述任务时用"**应该**可以/已经有/能切换"等期望式表述(如"demo 应该可以切换三个模型"),bot 容易**把期望当事实**,直接进入"启 server → 测试"路径,跳过了"验证功能是否真的存在"这一步。结果 = 启错 server / 跑错 demo / 浪费 30+ 分钟才发现"功能根本没做"。
+
+**实例(2026-08-20 实测,3 次踩同一坑)**:
+
+兄弟说"回忆昨天 PMXReduceFace 修复,打开 demo dev server 测试(应该要有 XiaHui 模型)"。bot 反应:
+1. **第 1 次跑偏**:把"demo"等同于 `packages/frontend` 游戏 demo → 启 frontend dev-server → grep 角色选择 UI → 发现 XiaHui 全在注释里
+2. **第 2 次跑偏**:兄弟纠正"我说的是 PMXReduceFace 的 demo" → 找到 `D:\Github\PMXReduceFace` → 启 PMXReduceFace webpack dev-server (8096) → 但端口 7093 的 frontend dev-server 没杀,撞端口
+3. **第 3 次跑偏**:兄弟说"demo 中应该可以切换 Xiaye1/XiaoMei/XiaHui" → bot 还是没 grep `demo/main.ts` 实查,凭"应该"推下去 → 最终 grep 才看到 main.ts 是**单模型**(`MODEL_NAME = 'XiaoMeiOriginFix_02_elrein'`),没有切换 UI
+
+**根因**:bot 收到期望式描述时,**默认走"快速路径"**(信任用户语境 → 启服务 → 准备测试),跳过了**前置验证**("X 真的存在吗")。
+
+**🔴 实战规则**(任何带"应该""可以""已经有"的用户描述必走):
+
+1. **5 秒实查原则**:兄弟说"X 应该 Y",bot 第一反应**不是**"启 X 服务测 Y",而是**"grep 代码确认 X 有 Y 这个能力"**——只读 1 个文件 10 秒,比启服务+排错 30 分钟快得多。
+2. **关键词触发,自动跑验证**:
+   - "demo 应该可以切换/选择 X" → grep `demo/main.*` / `demo/index.*` 找模型列表定义,确认是否有 MODEL_LIST / dropdown / 多模型 UI
+   - "X 应该已经接好了" → grep 角色名 / 资源路径,确认 MMDData.ts / config 里是否真注册
+   - "X 应该能跑/能进" → grep `dev-server` / `entry` / `main`,确认启动入口存在
+3. **多 demo / 多入口时必先盘点**:GTS-Play 仓内同时存在:
+   - `packages/frontend` 游戏 demo(端口 7093)
+   - `D:\Github\PMXReduceFace` PMXReduceFace 工具 demo(端口 8096)
+   - `D:\Github\GTS-Play\demos/` 旧 demos 目录(basic1 / new_basic2)
+   - `packages/bone_converter` V12 demo(独立 Vite/React)
+   兄弟说"demo"不指定 → bot 必须**先列所有可能 demo + 各自端口/入口**,问清是哪个再启,不能猜。
+4. **期望不符的礼貌反问格式**(写到回复里):
+   ```
+   兄弟你说"X 应该 Y",但我 grep 实测:
+   - [✅] 某文件 行 N 显示 Y 已实现
+   - [❌] 某文件 显示当前状态是 Z(≠ Y)
+   
+   是 (a) 你记错了,功能没做 → 要派 OpenCode 实现
+   还是 (b) 你想做的是别的入口 → 请指明
+   ```
+5. **派生检查单**(派工前 checklist 加一条):
+   - [ ] 兄弟说"X 应该 Y"类期望 → bot 第一步 grep 代码实查,**不直接派工**
+   - [ ] 实查发现 Y 不存在 → **反问兄弟**,不闷头派工去做"已经有 Y"
+   - [ ] 实查发现 Y 存在但状态不符(部分实现/老旧/分支错)→ 报告兄弟 + 等拍板
+
+**反面教材(2026-08-20 实测三连)**:
+
+| 步骤 | bot 动作 | 实际状态 | 浪费 |
+|------|---------|---------|------|
+| 启 frontend dev-server | 端口冲突,失败 | 不是用户说的 demo | 30s |
+| grep 角色 UI | 全在注释里,误导"未接入" | XiaHui 在 `mmd-character-extend` 启用着 | 1min |
+| 重新理解"PMXReduceFace demo" | 找到正确仓库 | 还是没查 demo 是否支持多模型 | 2min |
+| 启 PMXReduceFace dev-server | 兄弟纠正后 | 实际是单模型 demo | 5min |
+
+**总计浪费 ~9 分钟 + 兄弟拍桌 2 次**。如果一开始(第 0 步)就 grep `D:\Github\PMXReduceFace\demo\main.ts` 找 `MODEL_NAME`/`LODS`,看到是单模型,**立即**反问"要不要加多模型切换功能"(派工 A 方案),就跳过所有 9 分钟的冤枉路。
+
+**记忆点**:**用户说"应该"= bot 必须实查,不信任任**。`grep` 10 秒 ≤ 启服务 30 分钟,10 倍速节省。
 
 ## 🔴 `opencode run` argv 踩坑终极清单(2026-08-20 实测,3 条并列)
 

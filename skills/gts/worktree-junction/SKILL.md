@@ -124,6 +124,80 @@ git log --oneline -2            # 应见 Merge commit + wt1 的 fix commit
 Get-Content <改动文件>           # 确认内容已更新
 ```
 
+### 🔴🔴 merge 完后立刻 cleanup worktree（2026-08-20 兄弟拍板，XiaHui 教训）
+
+> **历史教训**：merge 完不删 worktree → D 盘残留目录 + 分支挂在那里没人管 → 下次开新 wt 误用旧分支（2026-08-20 实锤：wt1/wt2/wt3-prop-fix 三个 worktree 完成 XiaHui fix 后都没删，今早才发现）。**merge 完成 = 立刻 cleanup**，不许留。
+
+#### ⚠️🔴🔴 remove 前必须验证已 merge（2026-08-20 兄弟拍板）
+
+> **最致命的坑**：worktree 里 commit 了但忘了 merge 回 dev → `git worktree remove` 干净利落 → **改动跟着 wt 一起被丢**（未 merge 的 commit 在分支删除后变成悬空对象，git 会 gc 清掉，**代码永久消失**）。
+>
+> 所以 **`git worktree remove` 之前**必须按下面 §merge-verify 跑 5 个验证，全过才能 remove。**任何一项不通过 → 立即 abort + `notify.ps1` 通知兄弟 + 等拍板**。
+
+##### §merge-verify：5 个验证命令 + 判定标准
+
+```powershell
+# 在 D:\Github\GTS-Play（dev 主仓）跑
+
+# 1️⃣ wt 的 commit 是否都在 dev 历史里？
+$wtCommits = (git log dev..wt1 --oneline).Count
+# 期望：0。如果 >0 → wt 有未合并 commit，**绝对不能 remove**
+
+# 2️⃣ merge-base 是否等于 wt HEAD？
+$base = git merge-base dev wt1
+$wtHead = git rev-parse wt1
+# 期望：$base == $wtHead（wt 是 dev 的后代，merge 已落地）
+
+# 3️⃣ dev 上 wt 涉及的目录/文件内容是否真的更新了？
+# 例：wt1 改了 packages/frontend/src/xxx.tsx
+Get-Content packages/frontend/src/xxx.tsx | Select-String "wt1 改的关键字"
+# 期望：能搜到新代码。如果只有旧代码 → 没 merge 成功
+
+# 4️⃣ dev 上最近 5 个 commit 是否有 wt 的 fix commit 或 Merge commit？
+git log --oneline -5
+# 期望：能看到 wt1 的 commit 或 "Merge branch 'wt1'" 字样
+
+# 5️⃣ wt 内是否还有未提交的变更？（保险丝，防止「worktree commit 了但 dev 没 merge」）
+cd D:\Github\wt1
+git status --porcelain
+# 期望：空。如果有未提交变更 → 提醒兄弟（可能丢改动）
+```
+
+**判定规则（缺一不可）：**
+- ✅ 1️⃣ = 0  **AND** 2️⃣ 相等 **AND** 3️⃣ 搜得到 **AND** 4️⃣ 见 wt commit → **过**，可 remove
+- ❌ 任何一项不通过 → **abort**，跑：
+  ```powershell
+  # 通知兄弟：merge 验证失败，wt 不能删
+  & "D:\Github\GTS-Play\scripts\notify.ps1" "worktree cleanup abort: <wt名> 未 merge 回 dev，请手动确认" 120 "OpenClaw 阻塞"
+  ```
+  **不许**自动 merge / 自动 cherry-pick / 自动 force push。**等兄弟拍板**。
+
+##### cleanup 4 步（§merge-verify 全过后执行）
+
+```powershell
+cd D:\Github\GTS-Play
+
+# 1️⃣ 删除 worktree 实体
+git worktree remove D:\Github\wt1 --force
+
+# 2️⃣ 删除 wt 分支（防「实体没了但分支还活着」被下次误用）
+git branch -D wt1
+
+# 3️⃣ 清 git 内部 worktree 元数据缓存
+git worktree prune
+
+# 4️⃣ 二次确认：必须只剩 dev 一个
+git worktree list
+# 期望输出：D:/Github/GTS-Play  <commit>  [dev]（唯一一行）
+```
+
+**坑：**
+1. **`git worktree remove` 之前**必须跑完 §merge-verify 全部通过，**否则改动可能永久丢失**（2026-08-20 兄弟拍板，本节加进来的根因）
+2. `--force` 必备：有未提交变更时会拒绝，强制删会丢改动，**先确认 §merge-verify 1️⃣ = 0**
+3. 如果 worktree 里有 node_modules junction → `Remove-Item <wt>\node_modules` 先删 junction（Windows 文件系统对跨盘 junction 的删除有怪行为），再 `git worktree remove`
+4. `git branch -D`（大写 D）强制删未合并分支；`-d`（小写）会拒绝，所以**必须 -D**
+5. 兄弟硬偏好：**cleanup 是 merge 完成的判定标准**，不是可选项。merge 完成 → cleanup 完成 → 才算任务落地。
+
 ### 前置检查（merge 前）
 - 🔴 dev 工作区未提交变更**不涉及** merge 路径 → git 允许 merge（`git status --porcelain | Select-String <路径>` 无输出）
 - dev 工作区有他人未提交变更时**禁止 stash/commit**（opencode-schedule 纪律）——只要不涉及 merge 路径可直接 merge

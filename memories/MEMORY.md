@@ -1,4 +1,4 @@
-User (兄弟) prefers direct, concise answers; gets impatient when the agent spends many tool calls exploring files before answering a question the user already has context on (e.g. 'compare X and Y'). Answer from knowledge first, explore only to verify specific facts, then keep it short. 兄弟期望 bot **直接执行而非反复问确认**(2026-08-18 多次:「你直接让会话继续啊」「你去修复下啊」);遇能力外的事(启动 GUI server/配 API key/查余额)用一句话说明限制+给方案,别推卸或反问。
+兄弟期望 bot **直接执行而非反复问确认**(2026-08-18 多次:「你直接让会话继续啊」「你去修复下啊」;2026-08-20 再次拍板「不需要我拍板啊,你直接dispatch,只有还原文件、git checkout的操作才需要我确认」)。遇能力外的事(启动 GUI server/配 API key/查余额)用一句话说明限制+给方案,别推卸或反问。**改动纪律(8-20 定稿)**:源码改动/复制文件/创建目录/改 build 配置/调阈值/加功能/写 brief → agent 直接干不需拍板;真不可逆操作(`还原文件`/`git checkout`/`git reset --hard`/`git stash pop`/`rm -rf`)= 列计划+等拍。
 §
 🔴 LLM fail 先分类再动手(2026-08-18改):rate limit/429/quota=真限流等窗口或换模型;401/timeout/5xx=瞬时→同session发「继续」;纯静默unknown+模型实测可用=删会话直接重开(flash-free额度用完会明确报rate limit,不会静默unknown),换模型是最后手段;其余时段火山 flash
 §
@@ -44,16 +44,7 @@ gts-skill-update-discipline:纪律8=不塞选项menu / 纪律9=sqlite3路径C:\s
 §
 兄弟记忆压缩偏好(2026-08-19):memory.md只留最高优先级规则原文+索引,踩坑/具体案例/详细说明放MEMORY_ARCHIVE.md。详细内容→ARCHIVE+skill指针,不堆主表。
 §
-wt1 是 GTS-Play 的 git worktree（分支 wt1），node_modules 通过 junction 共享 `D:\Github\GTS-Play\node_modules`。两个分支用同一份依赖——修复一边等于修复两边。其他 worktree: wt2, wt3-prop-fix。§
-C 盘空间紧张(3.91GB/100GB)，Yarn Cache (`C:\Users\Administrator\AppData\Local\Yarn\Cache\v6`) 有 6826 个缓存目录是吃空间主因。bootstrap 完成后应跑 `yarn cache clean` 释放空间。§
-Yarn Cache 损坏会导致 `Extracting tar content of undefined failed` 错误（如 @ant-design/icons）。清法：手动删 `$env:LOCALAPPDATA\Yarn\Cache\v6\*ant-design*` 目录，但 Windows 文件锁可能导致部分删不掉。§
-GTS-Play `yarn bootstrap` 的 postinstall 有个 `gentype.exe not found` 错误（非关键），会导致 .bin 链接不建。绕过：`yarn install --ignore-scripts --mutex network` 跳过 postinstall 只做 linking。§
-Hermes 会话记录在 `E:\Hermes Agent CN Desktop\data\hermes-home\sessions\request_dump_*.json`，文件名含 session_id 和 dump 时间戳。同一 session 多个 dump 取最新的。已创建 skill `hermes-session-read`。
-§
-§
-wt1 worktree 的 node_modules 是 junction → GTS-Play 根的 node_modules（共享），修一次 = 所有 worktree 恢复。yarn cache 在 C:\Users\Administrator\AppData\Local\Yarn\Cache，大型 monorepo 可达数 GB，C 盘 <5GB 时易 corruption。Hermes 会话记录在 hermes-home/sessions/request_dump_*.json（429 限流快照，非完整对话），OpenCode 会话在 opencode.db session/part 表，两者不要混读。
-§
-Yarn Cache 损坏修复(2026-08-19):包装出来是空壳(package.json+LICENSE在,lib/bin缺)=缓存损坏。`--force`无效因仍从坏缓解压。修复:cmd /c "rd /s /q"直接删Yarn Cache目录( yarn cache clean太慢)> yarn install --force --ignore-scripts --mutex network。C盘Yarn Cache 6800+目录可占数GB。GTS-Play worktree(wt1/wt2/wt3)通过junction共享GTS-Play的node_modules,只需在根目录装一次。
+wt1/wt2/wt3-prop-fix 都是 GTS-Play 的 git worktree,node_modules 通过 junction 共享 `D:\Github\GTS-Play\node_modules` —— 修复一边等于修复两边。Yarn Cache 损坏根治:`cmd /c rd /s /q` 删 `$env:LOCALAPPDATA\Yarn\Cache\v6` 比 `yarn cache clean` 快100倍,Yarn 1 缓存6800+目录可占数 GB,C盘<5GB时易 corruption(C盘2.58→17.67GB 清后立竿见影)。Hermes 会话记录在 `hermes-home/sessions/request_dump_*.json`(429限流快照,非完整对话),OpenCode 会话在 opencode.db session/part 表,两者不要混读。PMXReduceFace 是独立 git 仓在 `D:\Github\PMXReduceFace`,通过 `file:../../../PMXReduceFace` 被 GTS-Play mmd_tool 引用。
 §
 Hermes Home 仓库(git@github.com:yyc-git/Hermes.git)已初始化并push(2026-08-19)。gts-submit-save + gts-save-memory 已改为双仓库提交：GTS-Play + Hermes Home。GitHub Push Protection 会扫描 skill 文件中的密钥(AKID/ark-xxx)，首次 commit 前必须脱敏。详见 hermes-home-state-management skill。
 §
@@ -63,15 +54,11 @@ hermes-session-read skill 已升级:主力数据源=state.db(sessions+messages�
 §
 React useEffect cleanup 时序坑(2026-08-19 prop fix):用 ref 标记「正在切换内容」防 onClose 误触发→失效,因为 cleanup 先执行 close()时 ref 还是 false。正解:antd-mobile Modal.show()返回handler支持replace()更新内容不触发onClose,两个effect分离:一个管开关([isShowProp]),一个管内容([currentPropItem])用handler.replace()。
 §
-🔴 webpack dev-server 从 worktree 启动但读主仓源码(2026-08-19 实锤):wt3 `node_modules` 是 junction→GTS-Play,`resolve.symlinks:true`+`resolve.modules:['node_modules']` 导致源文件解析回主仓。改 worktree 源码不 merge 回 dev → dev-server 看不到改动。测试必须先 merge。
-§
-Yarn Cache 损坏修复(2026-08-19):C盘<3GB时yarn下载的tarball解压不完整→包是空壳(目录在但无代码)→后续install用旧integrity跳过→必须`--force`+清缓存(`rd /s /q`比`yarn cache clean`快100倍)+`--ignore-scripts`跳过postinstall失败。清缓存后C盘2.58→17.67GB。
-§
-🔴 webpack dev-server 路径陷阱(2026-08-19 实锤):即使 cd 到 wt3 worktree 目录启动 dev-server,webpack 仍读 GTS-Play 主仓源码(source map 全解析到 ../../../GTS-Play/...)。验证:bundle 里搜旧代码确认。解决:worktree 改动必须先 merge 回 dev 再从主仓测。教训:worktree 改了 ≠ dev-server 能看到。
+🔴 webpack dev-server 路径陷阱(2026-08-19 实锤):wt3 worktree `node_modules` 是 junction→GTS-Play,`resolve.symlinks:true`+`resolve.modules:['node_modules']` 导致源文件解析回主仓(即使 cd 到 wt 目录启 dev-server,source map 全解析到 ../../../GTS-Play/...);改 worktree 源码不 merge → dev-server 看不到改动;bundle 搜旧代码确认。**worktree 改了 ≠ dev-server 能看到,必须先 merge 回 dev 再从主仓测**。
 §
 Brief 防卡死:涉及 PMX 减面/verify 等计算密集操作的测试,jest 可能 >300s 超时卡死 agent bash 工具。brief 必须显式写「禁止跑 jest/BDD 测试,只改代码」或「只跑单个 --testNamePattern」。验证用 reduce.mjs + verify.mjs 手动执行
 §
-🔴 回忆类问题信源优先级(2026-08-20 实锤):git log = 唯一权威 > daily log / state.db > MEMORY 主表。主表是沉淀不是 git-tracked,容易和代码现状脱节(已踩:8-19 沉淀 antd-mobile Modal 修复清单,8-20 顺手答你时把已修的"待修"清单又吐出来)。发现 git ≠ 主表 → 以 git 为准,立刻 patch 主表。
+🔴 回忆/git状态类问题信源优先级(2026-08-20 兄弟拍板):git log/git worktree list/ls = 唯一权威 > daily log / state.db > MEMORY 主表。主表是沉淀不是 git-tracked,容易和代码现状脱节(已踩:8-19 沉淀 Modal 修复清单,8-20 顺手答你时把已修的"待修"清单又吐出来;8-20 又踩"worktree 是否已 merge"凭记忆答错)。问"是否 merge/commit/部署/删除"类问题必须先实测,不准凭记忆。git ≠ 主表 → 以 git 为准,立刻 patch 主表。
 §
 antd-mobile Modal 白屏修复(commit **d6681051e** 2026-08-19):单机版✅ 全完成。City.tsx(setting+prop modal 改 Modal.show+replace)、Upgrade.tsx(Mask改useEffect+条件渲染,263行)、MissionComplete.tsx(Modal.show)。根因:stopLoop vs Three.js requestAnimationFrame 竞态。prop button 切换内容用 handler.replace() 不触发 onClose;使用道具后刷新 effect 依赖加 refresh state `_`。多人版 MultiplayerHall.tsx:806 gameOverVisible 仍 JSX 模式未改,不在本次修复范围。
 §
@@ -80,3 +67,7 @@ antd-mobile Modal 白屏修复(commit **d6681051e** 2026-08-19):单机版✅ 全
 🔴 `opencode run` argv 3 坑(2026-08-20 实测,已落 gts-dispatch-preflight):① `--command` 是 OpenCode 注册命令,普通 message 必须 positional;② `--attach` 必须带 `http://localhost:4098`;③ `--no-replay` 在某些 session 触发 BUN `UnknownError` 崩在 SessionPrompt.command → 派工默认不加。完整模板见 gts-dispatch-preflight §「argv 终极清单」。任何 dispatch 失败 = argv 坑,先看 CLI 错误第一行。
 §
 🔴 wait-opencode-session.mjs 参数单位是 **ms** 不是 s(2026-08-20 实锤):`<sessionID> [maxWaitMs] [stableMs]`。我之前传 5400/1800 当秒,实际 5400ms = 5.4s,30s 后就 TIMEOUT。**Pro 思考期 → maxWaitMs=5400000(90min),stableMs=300000(5min idle)**。gts-auto 主表/skill 文字写"maxWaitSec"是错的,跟脚本不一致 → 脚本以源码为准。完整 dispatch 模板见 gts-dispatch-preflight / gts-opencode-dispatch-pitfalls。
+§
+🔴 **worktree merge 后必须 `git worktree remove`(2026-08-20 兄弟拍板)**:fix/feat/refactor skill 漏的硬步骤。merge 完 dev 不算完,必须依次:① merge + push ② `git worktree remove <path>` ③ `git worktree prune` ④ `git worktree list` 二次确认 ⑤ issue 记 merge commit hash。详见 gts-dev-fix M-0 + gts-dev-feat Phase B + gts-dev-refactor Phase M + gts-auto Phase S。
+§
+🔴 兄弟说"demo"歧义(2026-08-20 实锤):**默认指 PMXReduceFace demo**,不是 GTS-Play frontend demo。PMXReduceFace 独立仓 `D:\Github\PMXReduceFace`,`yarn webpack:dev-server` 起在 **http://localhost:8096**(跟 frontend 7093 不冲突);LOD 对比页(LOD 100/70/55/50%),默认模型 `XiaoMeiOriginFix_02_elrein.pmx`(**不是 XiaHui**)。frontend demo 在 `packages/frontend`,端口 7093。启 PMXReduceFace demo 前 `netstat -ano | findstr :8096` 查占用防 EADDRINUSE。验证 CLI:`node src/tool/pmx-face-reduce/reduce.mjs --input X.pmx --output Y.pmx --target-ratio 0.5` + `verify.mjs X.pmx Y.pmx --target-ratio 0.5`。要测 XiaHui 走 PMXReduceFace demo,先看 demo/assets 里是否有 XiaHui PMX,没有要派 OpenCode 改 demo 源 + 加资源(源码改动 100%派)。
