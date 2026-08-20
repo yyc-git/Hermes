@@ -1,0 +1,6 @@
+2026-08-21 07:05:44,859 INFO hermes_cli.web_server: Mounted plugin API routes: /api/plugins/hermes-achievements/
+2026-08-21 07:05:44,972 INFO hermes_cli.web_server: Mounted plugin API routes: /api/plugins/kanban/
+2026-08-21 07:05:45,009 INFO hermes_cli.web_server: Desktop cron scheduler started (provider=builtin, interval=60s)
+2026-08-21 07:05:45,031 INFO hermes_cli.web_server: Desktop cron scheduler started (provider=builtin, interval=60s)
+2026-08-21 07:05:52,597 INFO tui_gateway.ws: ws accepted peer=127.0.0.1:62658
+2026-08-21 07:10:54,747 WARNING hermes_cli.web_server: event loop stalled 5.5s (GIL pressure suspected)

@@ -1,0 +1,1 @@
+{"fingerprint":"1:51137d76bd4f88ba","index":{"version":1,"tool_to_module":{"computer_use":"tools.computer_use_tool"},"tool_to_toolset":{"computer_use":"computer_use"},"module_to_tools":{"tools.computer_use_tool":["computer_use"]},"toolset_to_modules":{"computer_use":["tools.computer_use_tool"]},"opaque_modules":[],"modules":["tools.computer_use_tool"]}}

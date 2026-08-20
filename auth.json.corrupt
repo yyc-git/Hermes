@@ -1,0 +1,43 @@
+{
+  "version": 1,
+  "providers": {},
+  "credential_pool": {
+    "custom:灏忕背-mimo-路-token-plan": [
+      {
+        "id": "bea95e",
+        "label": "灏忕背 MiMo 路 Token Plan",
+        "auth_type": "api_key",
+        "priority": 0,
+        "source": "config:灏忕背 MiMo 路 Token Plan",
+        "last_status": null,
+        "last_status_at": null,
+        "last_error_code": null,
+        "last_error_reason": null,
+        "last_error_message": null,
+        "last_error_reset_at": null,
+        "base_url": "https://token-plan-cn.xiaomimimo.com/v1",
+        "request_count": 0,
+        "secret_fingerprint": "sha256:3383851185d3b8c8"
+      }
+    ],
+    "custom:小米-mimo-·-token-plan": [
+      {
+        "id": "05e3aa",
+        "label": "小米 MiMo · Token Plan",
+        "auth_type": "api_key",
+        "priority": 0,
+        "source": "config:小米 MiMo · Token Plan",
+        "last_status": null,
+        "last_status_at": null,
+        "last_error_code": null,
+        "last_error_reason": null,
+        "last_error_message": null,
+        "last_error_reset_at": null,
+        "base_url": "https://token-plan-cn.xiaomimimo.com/v1",
+        "request_count": 0,
+        "secret_fingerprint": "sha256:3383851185d3b8c8"
+      }
+    ]
+  },
+  "updated_at": "2026-08-20T23:13:27.025325+00:00"
+}
